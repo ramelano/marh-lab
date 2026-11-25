@@ -1,0 +1,24 @@
+=========================================================
+ KON-DES METAL - TEKLİF & MALİYET STÜDYOSU (v9 - Güvenli Hesaplama Edition)
+Designed & Powered by ramelano © 2026
+=========================================================
+
+1. PROGRAMI NASIL AÇARIM?
+- Klasörün içindeki "Baslat.bat" dosyasına çift tıklayın.
+- Hiçbir Node.js veya ek program kurulumu gerektirmez.
+
+2. v8 YENİLİKLERİ (HEROUI TASARIM DİLİ & STÜDYO ARAYÜZÜ)
+- Kurulumsuz yüksek performanslı mimari korunarak tüm arayüz modern HeroUI (Zinc & Architectural Gold) tasarım sistemine taşındı.
+- Glassmorphic üst menü, katmanlı kart gölgeleri, renk örnekli (swatch) alüminyum & cam seçim çipleri, animasyonlu sekmeli ayarlar penceresi ve arama filtreli geçmiş teklifler ekranı eklendi.
+- Sağ taraftaki canlı A4 önizleme sahnesine %78 / %90 / %100 yakınlaştırma (zoom) kontrolleri eklendi.
+
+3. v9 GÜVENLİLİK & DOĞRULAMA
+- Genişlik ve yükseklik 1–100000 mm aralığında doğrulanır; geçersiz ölçüyle kayıt, PDF veya WhatsApp gönderimi engellenir.
+- Sunucu çevrimdışı olsa bile son geçerli tarayıcı cache'i yüklenir.
+- PowerShell sunucusu güvenli yol kontrolü, JSON/gövde boyutu doğrulaması, atomik yazım ve otomatik yedekleme kullanır.
+- Mimari ve sonraki geliştirme planı için `KONDES_v9_MIMARI.md`, test bulguları için `KONDES_v8_TEST_RAPORU.md` dosyasına bakın.
+
+4. v10 WEB MODÜLLERİ
+- Üst menüdeki `3D Tasarım` ile sistem, ölçü, kanat, açılım, profil ve cam renklerini görsel olarak deneyin.
+- Canvas tasarımını sürükleyerek perspektifi değiştirin; `Teklife Aktar` ile ilk sistem kalemine uygulayın.
+- `Raporlar` panelinde müşteri özeti, teklif sayısı, satış, alan, maliyet ve tahmini net kârı filtreleyin.

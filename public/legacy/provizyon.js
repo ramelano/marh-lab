@@ -1,0 +1,1 @@
+window.KONDES_PROVIZYON = [];

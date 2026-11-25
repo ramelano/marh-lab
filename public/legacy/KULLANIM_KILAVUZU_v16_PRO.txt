@@ -1,0 +1,42 @@
+KON-DES METAL — TEKLİF & MALİYET STÜDYOSU
+v16 Pro v3 | Kurulum ve güvenli kullanım
+
+1) KURULUM
+- ZIP dosyasını yeni bir klasöre çıkarın.
+- Mevcut v15/v16 klasörünün üzerine yazmayın.
+- Önce eski klasörün tamamını ayrıca yedekleyin.
+- Baslat.bat dosyasına çift tıklayın.
+- Uygulama http://127.0.0.1:8765/Teklif_Hazirla.html adresinde açılır.
+- Node.js kurulumu gerekmez. Windows PowerShell 5.1 gerekir.
+
+2) TEKLİF KAYDI
+- Teklifler benzersiz ID ile saklanır; sipariş kodu kayıt anahtarı değildir.
+- Aynı sipariş kodu başka bir teklifte kullanılıyorsa mevcut kayıt korunur ve yeni kayıt için yeni kod atanır.
+- Var olan teklifi düzenlemek için Geçmiş/Provizyon listesinden açın; aynı ID güncellenir.
+
+3) PROVİZYON
+- Müşteriye gönderilen ancak henüz kabul edilmeyen teklifler Provizyonde Bekleyenler bölümünde kalır.
+- Provizyon kayıtları CRM cari borcuna ve onaylı satış raporlarına dahil edilmez.
+- Müşteri onayladığında Provizyon ekranındaki Onayla & CRM'e İşle eylemini kullanın.
+
+4) SİLİNENLER
+- Silme işlemlerinde onay penceresi açılır.
+- Teklif ve tahsilatlar kalıcı silinmek yerine Silinenler arşivine taşınır.
+- Geri yükleme, Silinenler sekmesinden yapılır.
+- Kalıcı silme geri alınamaz; yalnızca artık gerekmeyen çöp kutusu kayıtlarında kullanın.
+
+5) YEDEKLER
+- Yedekler sekmesinden tam JSON yedeği indirebilirsiniz.
+- JSON içe aktarmadan önce mevcut durum otomatik anlık yedeğe alınır.
+- Sunucu yedekleri yedekler/ klasöründe tutulur. Tam sistem JSON snapshot'ları geri yüklenebilir; .bak dosyaları indirilebilir.
+- Yedek geri yüklemeden sonra uygulama sayfayı yeniler ve sunucu verisini yeniden yükler.
+- Yedekler klasörünü düzenli olarak başka bir diske de kopyalayın.
+
+6) ÇEVRİMDIŞI KULLANIM
+- file:// üzerinden açıldığında veya yerel sunucu kapalıysa uygulama tarayıcı önbelleğiyle çalışır.
+- Çevrimdışı kayıtlar o tarayıcı profilinde kalır. Tarayıcı verilerini temizlemeden önce Tam JSON Yedeği indirin.
+- Sunucu durumu üst menüde görünür.
+
+7) CANLI KULLANIM ÖNCESİ
+- Windows üzerinde teklif kaydı, kod çakışması, provizyon/onay, CRM tahsilat geri yükleme, JSON geri yükleme, sunucu snapshot geri yükleme ve A4/3D çıktıları test edin.
+- İlk kabul testleri tamamlanmadan eski sürüm klasörünü silmeyin.
