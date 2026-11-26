@@ -3,12 +3,23 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "marhlab.supabase.pending.v1";
 const STATUS_EVENT = "marhlab:supabase-status";
 
-type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string };
+type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string; operation?: "upsert" | "delete"; filterId?: string };
 export type CustomerRecord = { id: string; name: string; phone?: string; addresses?: string[]; address?: string; city?: string; district?: string; notes?: string };
 export type QuoteRecord = Record<string, any>;
 
 export function publishSyncStatus(status: "local" | "syncing" | "synced" | "queued" | "error", message?: string) {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail: { status, message } }));
+}
+
+function stableUuid(value: string) {
+  let a = 0x811c9dc5;
+  let b = 0x9e3779b9;
+  for (const char of value) {
+    a = Math.imul(a ^ char.charCodeAt(0), 0x01000193);
+    b = Math.imul(b ^ char.charCodeAt(0), 0x85ebca6b);
+  }
+  const hex = `${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}${((a ^ (b >>> 1)) >>> 0).toString(16).padStart(8, "0")}${(Math.imul(a, b) >>> 0).toString(16).padStart(8, "0")}`.replace(/[^0-9a-f]/gi, "0").padStart(32, "0").slice(-32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 function readQueue(): QueueJob[] {
@@ -20,6 +31,11 @@ function writeQueue(queue: QueueJob[]) {
 
 async function perform(job: QueueJob) {
   if (!supabase) return;
+  if (job.operation === "delete" && job.filterId) {
+    const { error } = await supabase.from(job.table).delete().eq("id", job.filterId);
+    if (error) throw error;
+    return;
+  }
   const { error } = await supabase.from(job.table).upsert(job.rows, { onConflict: job.conflict });
   if (error) throw error;
 }
@@ -38,6 +54,20 @@ export async function queueUpsert(table: string, rows: Record<string, unknown>[]
   } catch (error) {
     writeQueue([...readQueue(), { id: crypto.randomUUID(), table, rows, conflict }]);
     publishSyncStatus("queued", error instanceof Error ? error.message : "Bulut bağlantısı geçici olarak kurulamadı.");
+  }
+}
+
+export async function queueDelete(table: string, id: string) {
+  const job: QueueJob = { id: crypto.randomUUID(), table, rows: [], conflict: "id", operation: "delete", filterId: id };
+  if (!supabase || !navigator.onLine) {
+    writeQueue([...readQueue(), job]);
+    publishSyncStatus("queued", "Silme işlemi bağlantı gelince buluta uygulanacak.");
+    return;
+  }
+  try { await perform(job); publishSyncStatus("synced"); }
+  catch (error) {
+    writeQueue([...readQueue(), job]);
+    publishSyncStatus("queued", error instanceof Error ? error.message : "Silme işlemi kuyruğa alındı.");
   }
 }
 
@@ -153,6 +183,7 @@ export function settingsFromCloud(row: any, fallback: any) {
 export function customerToCloud(tenantId: string, customer: CustomerRecord) {
   const address = customer.address || customer.addresses?.[0] || "";
   return {
+    id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(customer.id) ? customer.id : stableUuid(`${tenantId}:${customer.id}:${customer.name}`),
     tenant_id: tenantId,
     name: customer.name,
     phone: customer.phone || "",
@@ -215,10 +246,10 @@ export function quoteFromCloud(row: any) {
   };
 }
 
-export async function syncTenantSnapshot(tenantId: string, settings: any, customers: CustomerRecord[], quotes: QuoteRecord[], trash: any[]) {
+export async function syncTenantSnapshot(tenantId: string, settings: any, customers: CustomerRecord[], quotes: QuoteRecord[], trash: any[], financeEntries: any[] = [], financeCloudEnabled = false, deletedFinanceIds: string[] = []) {
   if (!supabase) { publishSyncStatus("local"); return; }
   await queueUpsert("tenant_settings", [settingsToCloud(tenantId, settings)], "tenant_id");
-  const { data: existingCustomers } = await supabase.from("customers").select("id,name").eq("tenant_id", tenantId);
+  const { data: existingCustomers } = await supabase.from("customers").select("id,name,is_deleted").eq("tenant_id", tenantId);
   const existingCustomerIds = new Map((existingCustomers || []).map((row: any) => [String(row.name).toLocaleLowerCase("tr"), row.id]));
   const cloudCustomers = customers.map((customer) => ({
     ...customerToCloud(tenantId, customer),
@@ -227,7 +258,12 @@ export async function syncTenantSnapshot(tenantId: string, settings: any, custom
       : {}),
   }));
   if (cloudCustomers.length) await queueUpsert("customers", cloudCustomers, "id");
-  const byName = existingCustomerIds;
+  const byName = new Map(existingCustomerIds);
+  cloudCustomers.forEach((row: any) => byName.set(String(row.name).toLocaleLowerCase("tr"), row.id));
+  for (const entry of (trash || []).filter((item: any) => item.type === "customer" && item.data)) {
+    const id = existingCustomerIds.get(String(entry.data.name || "").toLocaleLowerCase("tr")) || customerToCloud(tenantId, entry.data).id;
+    await queueUpsert("customers", [{ ...customerToCloud(tenantId, entry.data), id, is_deleted: true, deleted_at: entry.deletedAt || new Date().toISOString() }], "id");
+  }
   const deletedCodes = new Set((trash || []).filter((entry: any) => entry.type === "quote").map((entry: any) => entry.data?.orderCode).filter(Boolean));
   for (const quote of quotes) {
     const customerId = byName.get(String(quote.customerName || "").toLocaleLowerCase("tr")) as string | undefined;
@@ -247,6 +283,24 @@ export async function syncTenantSnapshot(tenantId: string, settings: any, custom
     const { data: existing } = await supabase.from("quotes").select("id").eq("tenant_id", tenantId).eq("order_code", quote.orderCode).maybeSingle();
     if (existing?.id) await queueUpsert("quotes", [{ ...payload, id: existing.id }], "id");
     else await queueUpsert("quotes", [payload], "id");
+  }
+  if (financeCloudEnabled) for (const id of deletedFinanceIds) await queueDelete("financial_transactions", id);
+  if (financeCloudEnabled && financeEntries.length) {
+    const { data: syncedCustomers } = await supabase.from("customers").select("id,name").eq("tenant_id", tenantId);
+    const syncedCustomerIds = new Map((syncedCustomers || []).map((row: any) => [String(row.name).toLocaleLowerCase("tr"), row.id]));
+    cloudCustomers.forEach((row: any) => { if (!syncedCustomerIds.has(String(row.name).toLocaleLowerCase("tr"))) syncedCustomerIds.set(String(row.name).toLocaleLowerCase("tr"), row.id); });
+    await queueUpsert("financial_transactions", financeEntries.map((entry) => ({
+      id: entry.id,
+      tenant_id: tenantId,
+      customer_id: syncedCustomerIds.get(String(entry.customerName || "").toLocaleLowerCase("tr")) || null,
+      customer_name: entry.customerName || "",
+      quote_code: entry.quoteCode || null,
+      kind: entry.kind,
+      amount: Number(entry.amount || 0),
+      transaction_date: entry.date,
+      description: entry.description || "",
+      updated_at: new Date().toISOString(),
+    })), "id");
   }
 }
 
@@ -268,5 +322,14 @@ export async function fetchTenantSnapshot(tenantId: string) {
   ]);
   const error = settingsResult.error || customersResult.error || quotesResult.error;
   if (error) throw error;
-  return { settings: settingsResult.data, customers: customersResult.data || [], quotes: quotesResult.data || [] };
+  const financeResult = await supabase.from("financial_transactions").select("*").eq("tenant_id", tenantId).order("transaction_date", { ascending: false });
+  const missingFinanceTable = financeResult.error && ["PGRST205", "42P01"].includes(financeResult.error.code || "");
+  if (financeResult.error && !missingFinanceTable) throw financeResult.error;
+  return {
+    settings: settingsResult.data,
+    customers: customersResult.data || [],
+    quotes: quotesResult.data || [],
+    financeEntries: financeResult.data || [],
+    financeCloudEnabled: !missingFinanceTable,
+  };
 }

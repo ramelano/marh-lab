@@ -1531,6 +1531,28 @@ export default function App() {
   const [siteMode, setSiteMode] = useState(false);
   const [approvedSearch, setApprovedSearch] = useState("");
   const [approvedStage, setApprovedStage] = useState("Tümü");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [financeCustomer, setFinanceCustomer] = useState(null);
+  const [financeEntries, setFinanceEntries] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.finance`) || "[]"); } catch { return []; }
+  });
+  const [deletedFinanceIds, setDeletedFinanceIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.deleted-finance`) || "[]"); } catch { return []; }
+  });
+  const [financeCloudEnabled, setFinanceCloudEnabled] = useState(false);
+  const [financeAmount, setFinanceAmount] = useState("");
+  const [financeKind, setFinanceKind] = useState("income");
+  const [financeDate, setFinanceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [financeDescription, setFinanceDescription] = useState("");
+  const [financeQuoteCode, setFinanceQuoteCode] = useState("");
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState("all");
+  const [ledgerCustomerFilter, setLedgerCustomerFilter] = useState("all");
+  const [ledgerDateFilter, setLedgerDateFilter] = useState("");
+  const [ledgerAmount, setLedgerAmount] = useState("");
+  const [ledgerKind, setLedgerKind] = useState("expense");
+  const [ledgerDate, setLedgerDate] = useState(new Date().toISOString().slice(0, 10));
+  const [ledgerDescription, setLedgerDescription] = useState("");
+  const [ledgerCustomerName, setLedgerCustomerName] = useState("");
   const [trash, setTrash] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`) || "[]"); } catch { return []; }
   });
@@ -1539,6 +1561,8 @@ export default function App() {
   const [adminCloudReady, setAdminCloudReady] = useState(false);
 
   useEffect(() => { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.trash`, JSON.stringify(trash)); }, [trash, firmSettings.username]);
+  useEffect(() => { try { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.finance`, JSON.stringify(financeEntries)); } catch {} }, [financeEntries, firmSettings.username]);
+  useEffect(() => { try { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.deleted-finance`, JSON.stringify(deletedFinanceIds)); } catch {} }, [deletedFinanceIds, firmSettings.username]);
 
   useEffect(() => {
     const onStatus = (event) => {
@@ -1590,22 +1614,39 @@ export default function App() {
         if (cancelled || !snapshot) return;
         setCloudTenantId(tenant.id);
         const prefix = `marhlab.tenant.${username}.`;
-        const remoteCustomers = snapshot.customers.map(customerFromCloud);
+        const remoteCustomers = snapshot.customers.filter((row) => !row.is_deleted).map(customerFromCloud);
         const remoteQuotes = snapshot.quotes.filter((row) => !row.is_deleted).map(quoteFromCloud);
         const deletedQuotes = snapshot.quotes.filter((row) => row.is_deleted).map((row) => ({ type: "quote", deletedAt: row.deleted_at || new Date().toISOString(), data: quoteFromCloud(row) }));
         const localCustomers = JSON.parse(localStorage.getItem(prefix + "customers") || "[]");
         const localQuotes = JSON.parse(localStorage.getItem(prefix + "quotes") || "[]");
         const localTrash = JSON.parse(localStorage.getItem(prefix + "trash") || "[]");
+        const deletedCustomerNames = new Set(localTrash.filter((entry) => entry.type === "customer").map((entry) => String(entry.data?.name || "").toLocaleLowerCase("tr")));
         const customersByName = new Map(localCustomers.map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
-        remoteCustomers.forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
+        remoteCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
         const quotesByCode = new Map(localQuotes.map((quote) => [quote.orderCode, quote]));
         remoteQuotes.forEach((quote) => quotesByCode.set(quote.orderCode, quote));
-        const trashByCode = new Map(localTrash.map((entry) => [entry.data?.orderCode, entry]));
+        const trashByCode = new Map(localTrash.map((entry, index) => [`${entry.type || "quote"}:${entry.data?.orderCode || entry.data?.id || index}`, entry]));
         deletedQuotes.forEach((entry) => trashByCode.set(entry.data.orderCode, entry));
         setFirmSettings(settingsFromCloud(snapshot.settings, firmSettings));
         setCustomers([...customersByName.values()]);
         setQuotes([...quotesByCode.values()]);
         setTrash([...trashByCode.values()]);
+        setFinanceCloudEnabled(snapshot.financeCloudEnabled);
+        if (snapshot.financeCloudEnabled) {
+          const localFinance = JSON.parse(localStorage.getItem(prefix + "finance") || "[]");
+          const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
+          snapshot.financeEntries.forEach((entry) => mergedFinance.set(entry.id, {
+            id: entry.id,
+            customerId: entry.customer_id || "",
+            customerName: entry.customer_name || "",
+            quoteCode: entry.quote_code || "",
+            kind: entry.kind,
+            amount: Number(entry.amount || 0),
+            date: entry.transaction_date,
+            description: entry.description || "",
+          }));
+          setFinanceEntries([...mergedFinance.values()].filter((entry) => !deletedFinanceIds.includes(entry.id)));
+        }
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
       } catch (error) {
@@ -1618,10 +1659,10 @@ export default function App() {
   useEffect(() => {
     if (viewMode !== "member" || !tenantCloudReady || !cloudTenantId || !supabase) return;
     const timer = window.setTimeout(() => {
-      void syncTenantSnapshot(cloudTenantId, firmSettings, customers, quotes, trash);
+      void syncTenantSnapshot(cloudTenantId, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds);
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [viewMode, tenantCloudReady, cloudTenantId, firmSettings, customers, quotes, trash]);
+  }, [viewMode, tenantCloudReady, cloudTenantId, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds]);
 
   const activeSeriesObj = useMemo(
     () => SYSTEM_SERIES.find((s) => s.id === selectedSeriesId) || SYSTEM_SERIES[0],
@@ -1729,6 +1770,47 @@ export default function App() {
 
   const pendingQuotes = useMemo(() => quotes.filter((q) => q.status === "pending"), [quotes]);
   const approvedQuotes = useMemo(() => quotes.filter((q) => q.status === "approved"), [quotes]);
+  const allFinanceEntries = useMemo(() => {
+    const entries = [...financeEntries];
+    for (const quote of approvedQuotes) {
+      const legacyDeposit = Number(quote.deposit || 0);
+      const id = `legacy-deposit-${quote.id}`;
+      if (legacyDeposit > 0 && !entries.some((entry) => entry.id === id)) entries.push({
+        id, customerName: quote.customerName, quoteCode: quote.orderCode, kind: "income",
+        amount: legacyDeposit, date: quote.date || new Date().toISOString().slice(0, 10), description: "Eski teklif kapora kaydı",
+      });
+    }
+    return entries;
+  }, [financeEntries, approvedQuotes]);
+  const signedFinanceAmount = (entry) => ["income", "adjustment_in"].includes(entry.kind) ? Number(entry.amount || 0) : -Number(entry.amount || 0);
+  const approvedCustomerWork = (name) => approvedQuotes.filter((quote) => quote.customerName === name).reduce((sum, quote) => sum + quoteTotal(quote), 0);
+  const customerNetPayments = (name) => allFinanceEntries.filter((entry) => entry.customerName === name).reduce((sum, entry) => sum + signedFinanceAmount(entry), 0);
+  const customerReceivable = (name) => Math.max(0, approvedCustomerWork(name) - customerNetPayments(name));
+  const totalReceived = allFinanceEntries.filter((entry) => ["income", "adjustment_in"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const totalOutgoings = allFinanceEntries.filter((entry) => ["expense", "refund", "adjustment_out"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const overallReceivables = [...new Set<string>(approvedQuotes.map((quote) => String(quote.customerName)))].reduce<number>((sum, name) => sum + customerReceivable(name), 0);
+  const netCash = totalReceived - totalOutgoings;
+  const filteredLedger = allFinanceEntries.filter((entry) =>
+    (ledgerTypeFilter === "all" || entry.kind === ledgerTypeFilter) &&
+    (ledgerCustomerFilter === "all" || entry.customerName === ledgerCustomerFilter) &&
+    (!ledgerDateFilter || entry.date === ledgerDateFilter)
+  ).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const visibleCustomers = sortedCustomers.filter((customer) =>
+    `${customer.name} ${customer.phone || ""} ${customer.city || ""} ${customer.district || ""} ${customer.address || ""} ${(customer.addresses || []).join(" ")}`.toLocaleLowerCase("tr").includes(customerSearch.toLocaleLowerCase("tr"))
+  );
+  const nextAvailableOrderCode = (quotesToCheck = quotes, trashToCheck = trash, numberFloor = firmSettings.nextOrderNumber) => {
+    const allQuotes = [...quotesToCheck, ...trashToCheck.map((entry) => entry.data).filter(Boolean)];
+    const used = new Set(allQuotes.map((quote) => String(quote.orderCode || "").trim().toLocaleLowerCase("tr")));
+    let maxNumber = Math.max(0, Number(numberFloor || 1) - 1);
+    allQuotes.forEach((quote) => {
+      const match = String(quote.orderCode || "").match(/(\d+)\s*$/);
+      if (match) maxNumber = Math.max(maxNumber, Number(match[1]));
+    });
+    let next = maxNumber + 1;
+    let candidate = `${firmSettings.orderPrefix || "PRJ"}-${next}`;
+    while (used.has(candidate.toLocaleLowerCase("tr"))) candidate = `${firmSettings.orderPrefix || "PRJ"}-${++next}`;
+    return candidate;
+  };
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
@@ -1765,6 +1847,9 @@ export default function App() {
         setCustomers(JSON.parse(localStorage.getItem(prefix + "customers") || "[]"));
         setQuotes(JSON.parse(localStorage.getItem(prefix + "quotes") || "[]"));
         setTrash(JSON.parse(localStorage.getItem(prefix + "trash") || "[]"));
+        setFinanceEntries(JSON.parse(localStorage.getItem(prefix + "finance") || "[]"));
+        setDeletedFinanceIds(JSON.parse(localStorage.getItem(prefix + "deleted-finance") || "[]"));
+        setFinanceCloudEnabled(false);
       } catch {}
       setLoginError(""); setShowLoginModal(false); setViewMode("member"); return;
     }
@@ -1772,7 +1857,7 @@ export default function App() {
   };
 
   const resetForNewQuote = (prefillCustomer = null) => {
-    const nextCode = `${firmSettings.orderPrefix}-${firmSettings.nextOrderNumber}`;
+    const nextCode = nextAvailableOrderCode();
     setEditingQuoteId(null);
     setOrderCode(nextCode);
     setBasketItems([]);
@@ -1869,6 +1954,13 @@ export default function App() {
 
   const saveQuote = (targetStatus) => {
     const qObj = buildQuoteObject(targetStatus);
+    const duplicateCode = [...quotes, ...trash.map((entry) => entry.data).filter(Boolean)].some((quote) =>
+      quote.id !== qObj.id && String(quote.orderCode || "").trim().toLocaleLowerCase("tr") === String(qObj.orderCode || "").trim().toLocaleLowerCase("tr")
+    );
+    if (!qObj.orderCode.trim() || duplicateCode) {
+      showToast(duplicateCode ? "Bu sipariş kodu kullanılmış. Yeni ve benzersiz bir kod girin." : "Sipariş kodu boş bırakılamaz.");
+      return;
+    }
     upsertCustomerInArchive(qObj.customerName, qObj.customerPhone, qObj.customerAddress);
 
     setQuotes((prev) => {
@@ -1882,11 +1974,12 @@ export default function App() {
     });
 
     if (!editingQuoteId) {
+      const savedNumber = Number(String(qObj.orderCode).match(/(\d+)\s*$/)?.[1] || 0);
       setFirmSettings((prev) => ({
         ...prev,
-        nextOrderNumber: prev.nextOrderNumber + 1,
+        nextOrderNumber: Math.max(Number(prev.nextOrderNumber || 1), savedNumber + 1),
       }));
-      setOrderCode(`${firmSettings.orderPrefix}-${firmSettings.nextOrderNumber + 1}`);
+      setOrderCode(nextAvailableOrderCode([...quotes, qObj], trash, Math.max(Number(firmSettings.nextOrderNumber || 1), savedNumber + 1)));
     }
 
     if (targetStatus === "pending") {
@@ -1973,6 +2066,74 @@ export default function App() {
     showToast(`İş durumu "${stage}" olarak güncellendi.`);
   };
 
+  const unapproveQuote = (quoteId) => {
+    setQuotes((prev) => prev.map((quote) => quote.id === quoteId ? { ...quote, status: "pending" } : quote));
+    showToast("Teklif provizyona alındı; müşteri alacağı anında güncellendi.");
+  };
+
+  const moveQuoteToTrash = (quote) => {
+    setConfirmDialog({
+      title: "Onaylı Teklifi Çöp Kutusuna Taşı",
+      message: `${quote.orderCode} (${quote.customerName}) silinsin mi? İş tutarı ve alacak bakiyeden düşecektir.`,
+      onConfirm: () => {
+        setQuotes((prev) => prev.filter((item) => item.id !== quote.id));
+        setTrash((prev) => [...prev, { type: "quote", deletedAt: new Date().toISOString(), data: quote }]);
+        showToast(`${quote.orderCode} çöp kutusuna taşındı; bakiye yenilendi.`);
+      },
+    });
+  };
+
+  const deleteCustomer = (customer) => {
+    setConfirmDialog({
+      title: "Müşteriyi Sil",
+      message: `${customer.name} rehberden silinsin mi? Teklifler ve mali hareketler korunur.`,
+      onConfirm: () => {
+        setCustomers((prev) => prev.filter((item) => item.id !== customer.id));
+        setTrash((prev) => [...prev, { type: "customer", deletedAt: new Date().toISOString(), data: customer }]);
+        setFinanceCustomer(null);
+        showToast(`${customer.name} müşteri rehberinden silindi.`);
+      },
+    });
+  };
+
+  const addFinanceEntry = (entry) => {
+    const amount = Number(entry.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { showToast("Tutar sıfırdan büyük olmalıdır."); return false; }
+    setFinanceEntries((prev) => [{
+      id: crypto.randomUUID(), customerId: entry.customer?.id || "", customerName: entry.customer?.name || entry.customerName || "",
+      quoteCode: entry.quoteCode || "", kind: entry.kind, amount, date: entry.date || new Date().toISOString().slice(0, 10),
+      description: entry.description?.trim() || "Açıklama eklenmedi",
+    }, ...prev]);
+    return true;
+  };
+
+  const saveCustomerFinance = () => {
+    if (!financeCustomer || !addFinanceEntry({
+      customer: financeCustomer, kind: financeKind, amount: financeAmount, date: financeDate,
+      description: financeDescription, quoteCode: financeQuoteCode,
+    })) return;
+    showToast(financeKind === "income" ? "Tahsilat müşteri bakiyesine ve muhasebeye işlendi." : "İade / düzeltme mali hareketlere işlendi.");
+    setFinanceAmount(""); setFinanceDescription(""); setFinanceQuoteCode("");
+  };
+
+  const saveGeneralLedgerEntry = () => {
+    const selectedCustomer = customers.find((customer) => customer.name === ledgerCustomerName) || null;
+    if (!addFinanceEntry({ kind: ledgerKind, amount: ledgerAmount, date: ledgerDate, description: ledgerDescription, customer: selectedCustomer })) return;
+    showToast("Muhasebe hareketi kaydedildi; kasa ve müşteri bakiyesi güncellendi.");
+    setLedgerAmount(""); setLedgerDescription("");
+  };
+
+  const deleteFinanceEntry = (entry) => {
+    if (String(entry.id).startsWith("legacy-deposit-")) {
+      const quoteId = String(entry.id).replace("legacy-deposit-", "");
+      setQuotes((prev) => prev.map((quote) => quote.id === quoteId ? { ...quote, deposit: 0 } : quote));
+    } else {
+      setFinanceEntries((prev) => prev.filter((item) => item.id !== entry.id));
+      setDeletedFinanceIds((prev) => prev.includes(entry.id) ? prev : [...prev, entry.id]);
+    }
+    showToast("Mali hareket silindi; kasa ve alacak yeniden hesaplandı.");
+  };
+
   const handleLogoUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2001,7 +2162,7 @@ export default function App() {
   const syncLocalDataToCloud = async () => {
     if (!supabase) {
       publishSyncStatus("local", "Supabase ortam değişkenleri tanımlı değil; veriler bu cihazda tutuluyor.");
-      showToast("Supabase ayarı bulunamadı; yerel modda çalışmaya devam ediliyor.");
+      showToast("Supabase bağlantısı ayarlı değil. Veriler bu cihazda korunuyor; .env ayarlarını tamamlayın.");
       return;
     }
     try {
@@ -2009,12 +2170,12 @@ export default function App() {
       const tenant = cloudTenantId ? { id: cloudTenantId } : await fetchTenant(activeTenantUsername);
       if (!tenant?.id) throw new Error("Bu firma Supabase tenants tablosunda bulunamadı.");
       setCloudTenantId(tenant.id);
-      await syncTenantSnapshot(tenant.id, firmSettings, customers, quotes, trash);
+      await syncTenantSnapshot(tenant.id, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds);
       await flushCloudQueue();
       showToast("Yerel firma verileri bulut eşitleme kuyruğuna aktarıldı.");
     } catch (error) {
       publishSyncStatus("error", error instanceof Error ? error.message : "Bulut aktarımı tamamlanamadı.");
-      showToast("Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor.");
+      showToast(`Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor. ${error instanceof Error ? error.message : "Bağlantı veya yetki ayarlarını kontrol edin."}`);
     }
   };
 
@@ -2680,13 +2841,24 @@ export default function App() {
                     <Settings className="w-3.5 h-3.5" />
                     Ayarlar
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setMemberTab("accounting")}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                      memberTab === "accounting" ? "bg-emerald-500 text-slate-950 shadow-md" : "text-slate-300 hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <WalletCards className="w-3.5 h-3.5" />
+                    Genel Muhasebe
+                  </button>
                 </nav>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={syncLocalDataToCloud}
-                    title={syncMessage || (isSupabaseConfigured ? "Yerel verileri Supabase ile eşitle" : "Supabase ayarı yok; yerel mod etkin")}
+                    title={syncMessage || (isSupabaseConfigured ? "Firma ayarları, müşteriler, teklifler ve mali hareketleri Supabase ile eşitler. Bağlantı yoksa değişiklikler cihazda sıraya alınır." : "Supabase bağlantısı ayarlı değil. Veriler yerelde kalır; .env içinde VITE_SUPABASE_URL ve VITE_SUPABASE_ANON_KEY tanımlayın.")}
+                    aria-label="Yerel firma verilerini Supabase ile eşitle. Bağlantı yoksa değişiklikler çevrimdışı kuyruğa alınır."
                     className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition ${
                       syncState === "error" ? "bg-rose-500/10 border-rose-500/30 text-rose-300" :
                       syncState === "queued" ? "bg-amber-500/10 border-amber-500/30 text-amber-300" :
@@ -3614,6 +3786,12 @@ export default function App() {
                               <option value="Montajda">🚚 Montajda</option>
                               <option value="Teslim Edildi">✅ Teslim Edildi</option>
                             </select>
+                            <button type="button" onClick={() => unapproveQuote(q.id)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500/10 border border-amber-500/25 px-2.5 py-1.5 text-[11px] font-bold text-amber-300">
+                              <Clock className="w-3.5 h-3.5" /> Onayı Kaldır / Bekleyene Al
+                            </button>
+                            <button type="button" onClick={() => moveQuoteToTrash(q)} className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 border border-rose-500/25 px-2.5 py-1.5 text-[11px] font-bold text-rose-300">
+                              <Trash2 className="w-3.5 h-3.5" /> Sil (Çöp Kutusuna Taşı)
+                            </button>
                           </div>
                         </div>
                       );
@@ -3626,19 +3804,23 @@ export default function App() {
             {/* SEKME 4: MÜŞTERİ ARŞİVİ */}
             {memberTab === "archive" && (
               <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-6 space-y-4">
-                <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
+                <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
                       ALFABETİK CARİ &amp; ŞANTİYE REHBERİ
                     </span>
                     <h2 className="text-lg font-bold text-white">
-                      Müşteri Arşivi (A → Z Sıralı • {sortedCustomers.length} Kayıt)
+                      Müşteri Arşivi (A → Z Sıralı • {visibleCustomers.length} Kayıt)
                     </h2>
+                  </div>
+                  <div className="relative min-w-[240px]">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                    <input value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Ad, telefon, adres veya ilçe ara" className="w-full rounded-xl bg-slate-950 border border-slate-700 py-2 pl-9 pr-3 text-xs text-white focus:border-amber-500 focus:outline-none" />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sortedCustomers.map((c) => (
+                  {visibleCustomers.map((c) => (
                     <div
                       key={c.id}
                       className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-3"
@@ -3647,14 +3829,14 @@ export default function App() {
                         <div className="flex items-center justify-between">
                           <h3 className="text-sm font-bold text-white">{c.name}</h3>
                           <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">
-                            {c.addresses.length} Şantiye
+                            {(c.addresses || []).length} Şantiye
                           </span>
                         </div>
                         <div className="text-xs text-slate-400 flex items-center gap-1.5">
                           <Phone className="w-3.5 h-3.5 text-amber-400" />
                           {c.phone || "Telefon yok"}
                         </div>
-                        {c.addresses.map((addr, idx) => (
+                        {(c.addresses || []).map((addr, idx) => (
                           <div
                             key={idx}
                             className="text-[11px] text-slate-400 flex items-start gap-1.5"
@@ -3665,16 +3847,75 @@ export default function App() {
                         ))}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => resetForNewQuote(c)}
-                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold transition"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Bu Müşteriye Yeni Teklif Hazırla
-                      </button>
+                      <div className="space-y-2">
+                        <button type="button" onClick={() => resetForNewQuote(c)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold transition">
+                          <Plus className="w-3.5 h-3.5" /> Bu Müşteriye Yeni Teklif Hazırla
+                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button type="button" onClick={() => { setFinanceCustomer(c); setFinanceKind("income"); setFinanceDate(new Date().toISOString().slice(0, 10)); }} className="inline-flex items-center justify-center gap-1 rounded-xl bg-sky-500/10 border border-sky-500/25 px-2 py-2 text-[11px] font-bold text-sky-300">
+                            <WalletCards className="w-3.5 h-3.5" /> Mali İşlemler
+                          </button>
+                          <button type="button" onClick={() => deleteCustomer(c)} className="inline-flex items-center justify-center gap-1 rounded-xl bg-rose-500/10 border border-rose-500/25 px-2 py-2 text-[11px] font-bold text-rose-300">
+                            <Trash2 className="w-3.5 h-3.5" /> Müşteriyi Sil
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {memberTab === "accounting" && (
+              <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-6 space-y-4">
+                <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">KASA, TAHSİLAT &amp; MÜŞTERİ ALACAKLARI</span>
+                    <h2 className="text-lg font-bold text-white">Genel Muhasebe</h2>
+                    <p className="text-xs text-slate-400 mt-1">Onaylı teklifler ve müşteri mali hareketleri bu özetlere anında yansır.</p>
+                  </div>
+                </div>
+                {!financeCloudEnabled && isSupabaseConfigured && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                    Bulut muhasebe tablosu henüz hazır değil; bu cihazdaki hareketler kaybolmadan yerel kaydediliyor. Çoklu cihaz eşitlemesi için ZIP içindeki <code>supabase/member-finance.sql</code> dosyasını Supabase SQL Editor&apos;da çalıştırın.
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  {[
+                    ["Kasa / Net Nakit Durumu", netCash, "income"],
+                    ["Toplam Tahsilat (Giren)", totalReceived, "income"],
+                    ["Toplam Gider / İade & Ödeme", totalOutgoings, "expense"],
+                    ["Toplam Müşteri Alacağı", overallReceivables, "receivable"],
+                  ].map(([label, value, type]) => (
+                    <div key={label} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                      <div className="text-[11px] font-bold text-slate-400 uppercase">{label}</div>
+                      <div className={`text-xl font-black mt-1 ${type === "expense" ? "text-rose-300" : type === "receivable" ? "text-amber-300" : "text-emerald-400"}`}>₺{Number(value).toLocaleString("tr-TR")}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                  <h3 className="text-sm font-bold text-amber-400">Genel Gider / Tahsilat / Düzeltme Ekle</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+                    <select value={ledgerKind} onChange={(e) => setLedgerKind(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white">
+                      <option value="expense">Gider / Ödeme (çıkan)</option><option value="income">Tahsilat (giren)</option><option value="refund">İade (çıkan)</option><option value="adjustment_in">Düzeltme (giren)</option><option value="adjustment_out">Düzeltme (çıkan)</option>
+                    </select>
+                    <input type="number" min="0.01" step="0.01" value={ledgerAmount} onChange={(e) => setLedgerAmount(e.target.value)} placeholder="Tutar ₺" className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
+                    <input type="date" value={ledgerDate} onChange={(e) => setLedgerDate(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
+                    <select value={ledgerCustomerName} onChange={(e) => setLedgerCustomerName(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white"><option value="">Müşteri ilişkilendirme (isteğe bağlı)</option>{sortedCustomers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}</select>
+                    <input value={ledgerDescription} onChange={(e) => setLedgerDescription(e.target.value)} placeholder="Açıklama" className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
+                    <button type="button" onClick={saveGeneralLedgerEntry} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-extrabold text-slate-950">Hareketi Kaydet</button>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-white">Muhasebe Hareket Defteri</h3><div className="flex flex-wrap gap-2">
+                    <select value={ledgerTypeFilter} onChange={(e) => setLedgerTypeFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="all">Tüm hareketler</option><option value="income">Tahsilat</option><option value="expense">Gider / Ödeme</option><option value="refund">İade</option><option value="adjustment_in">Düzeltme (giren)</option><option value="adjustment_out">Düzeltme (çıkan)</option></select>
+                    <select value={ledgerCustomerFilter} onChange={(e) => setLedgerCustomerFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="all">Tüm müşteriler</option>{[...new Set(allFinanceEntries.map((entry) => entry.customerName).filter(Boolean))].map((name) => <option key={name} value={name}>{name}</option>)}</select>
+                    <input type="date" value={ledgerDateFilter} onChange={(e) => setLedgerDateFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
+                  </div></div>
+                  <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-xs"><thead><tr className="border-b border-slate-700 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür</th><th className="p-2">Müşteri</th><th className="p-2">Teklif</th><th className="p-2">Açıklama</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
+                    {filteredLedger.map((entry) => <tr key={entry.id} className="border-b border-slate-800"><td className="p-2 text-slate-300">{entry.date || "—"}</td><td className="p-2 text-slate-200">{{ income: "Tahsilat", expense: "Gider / Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind}</td><td className="p-2 text-slate-300">{entry.customerName || "Genel"}</td><td className="p-2 text-slate-400">{entry.quoteCode || "—"}</td><td className="p-2 text-slate-400">{entry.description}</td><td className={`p-2 text-right font-bold ${signedFinanceAmount(entry) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{signedFinanceAmount(entry) >= 0 ? "+" : "−"}₺{Number(entry.amount).toLocaleString("tr-TR")}</td><td className="p-2 text-right"><button type="button" title="Hareketi sil" onClick={() => deleteFinanceEntry(entry)} className="rounded-lg p-1.5 text-rose-300 hover:bg-rose-500/10"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
+                    {!filteredLedger.length && <tr><td colSpan={7} className="p-6 text-center text-slate-500">Filtrelere uygun mali hareket bulunamadı.</td></tr>}
+                  </tbody></table></div>
                 </div>
               </div>
             )}
@@ -4152,10 +4393,38 @@ export default function App() {
       {/* ==================================================================== */}
       {/* RENKLİ TEK SAYFA DİKEY A4 (210mm x 297mm) PDF ÖNİZLEME & YAZDIRMA    */}
       {/* ==================================================================== */}
+      {financeCustomer && viewMode === "member" && (
+        <div className="no-print fixed inset-0 z-[70] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5" onClick={() => setFinanceCustomer(null)}>
+          <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl p-4 sm:p-6 space-y-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3"><div><div className="text-[11px] font-bold uppercase tracking-wider text-amber-400">MÜŞTERİ CARİ HESABI</div><h2 className="text-lg font-extrabold text-white">{financeCustomer.name} — Mali İşlemler</h2><p className="text-xs text-slate-400 mt-1">Teklif ve her mali hareket Genel Muhasebe ile birlikte güncellenir.</p></div><button type="button" onClick={() => setFinanceCustomer(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800"><X className="w-4 h-4" /></button></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[["Toplam Onaylı İş", approvedCustomerWork(financeCustomer.name)], ["Bugüne Kadarki Net Ödeme", customerNetPayments(financeCustomer.name)], ["Kalan Alacak", customerReceivable(financeCustomer.name)]].map(([label, value], index) => <div key={label} className="rounded-xl bg-slate-950 border border-slate-800 p-3"><div className="text-[10px] font-bold uppercase text-slate-400">{label}</div><div className={`text-lg font-black mt-1 ${index === 2 ? "text-amber-300" : "text-emerald-300"}`}>₺{Number(value).toLocaleString("tr-TR")}</div></div>)}
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+              <h3 className="text-sm font-bold text-white">Tahsilat / İade / Düzeltme Ekle</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+                <select value={financeKind} onChange={(e) => setFinanceKind(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="income">Tahsilat (giren)</option><option value="refund">İade / Ödeme (çıkan)</option><option value="adjustment_in">Düzeltme (giren)</option><option value="adjustment_out">Düzeltme (çıkan)</option></select>
+                <input type="number" min="0.01" step="0.01" value={financeAmount} onChange={(e) => setFinanceAmount(e.target.value)} placeholder="Tutar ₺" className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
+                <input type="date" value={financeDate} onChange={(e) => setFinanceDate(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
+                <input value={financeQuoteCode} onChange={(e) => setFinanceQuoteCode(e.target.value)} placeholder="Sipariş kodu (isteğe bağlı)" className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
+                <input value={financeDescription} onChange={(e) => setFinanceDescription(e.target.value)} placeholder="Açıklama" className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
+                <button type="button" onClick={saveCustomerFinance} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-extrabold text-slate-950">Hareketi Kaydet</button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-800 overflow-hidden">
+              <div className="px-3 py-2 bg-slate-950 text-xs font-bold text-slate-200">Mali Hareket Geçmişi</div>
+              <div className="max-h-64 overflow-auto"><table className="w-full min-w-[600px] text-xs"><thead><tr className="border-y border-slate-800 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür / Açıklama</th><th className="p-2">Teklif</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
+                {allFinanceEntries.filter((entry) => entry.customerName === financeCustomer.name).sort((a, b) => String(b.date).localeCompare(String(a.date))).map((entry) => <tr key={entry.id} className="border-b border-slate-800"><td className="p-2 text-slate-300">{entry.date || "—"}</td><td className="p-2"><div className="text-slate-200">{{ income: "Tahsilat", expense: "Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind}</div><div className="text-[10px] text-slate-500">{entry.description}</div></td><td className="p-2 text-slate-400">{entry.quoteCode || "—"}</td><td className={`p-2 text-right font-bold ${signedFinanceAmount(entry) > 0 ? "text-emerald-300" : "text-rose-300"}`}>{signedFinanceAmount(entry) > 0 ? "+" : "−"}₺{Number(entry.amount).toLocaleString("tr-TR")}</td><td className="p-2 text-right"><button type="button" onClick={() => deleteFinanceEntry(entry)} title="Bu hareketi sil" className="rounded-lg p-1.5 text-rose-300 hover:bg-rose-500/10"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
+                {!allFinanceEntries.some((entry) => entry.customerName === financeCustomer.name) && <tr><td colSpan={5} className="p-5 text-center text-slate-500">Bu müşteri için mali hareket bulunmuyor.</td></tr>}
+              </tbody></table></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pdfQuote && pdfTotals && (
         <div className="print-modal-shell fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col">
           <div className="no-print bg-slate-900 border-b border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="no-print flex justify-end w-full"><a href={`https://wa.me/${String(pdfQuote?.customerPhone||"").replace(/\D/g, "")}?text=${encodeURIComponent(`Teklif ${pdfQuote?.orderCode || ""} • Genel toplam: ₺${pdfTotals?.grandTotal?.toLocaleString("tr-TR") || "0"}`)}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white"><MessageCircle className="w-4 h-4"/>WhatsApp ile Paylaş</a></div>
             <div className="flex flex-wrap items-center gap-5">
               <div className="font-extrabold text-sm text-white">
                 A4 Müşteri Teklif Formu —{" "}
@@ -4470,26 +4739,9 @@ export default function App() {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 bg-amber-50/70 border border-amber-300/80 rounded px-3 py-1.5 text-[9px]">
-                      <div className="border-r border-amber-300/80 pr-2">
-                        <div className="font-extrabold text-slate-900">
-                          DÜZENLEYEN YETKİLİ (ELEKTRONİK TEKLİF)
-                        </div>
-                        <div className="text-slate-700 mt-0.5">
-                          <strong>{firmSettings.ownerName}</strong> — {firmSettings.companyName} •
-                          Dijital ortamda hazırlanmıştır.
-                        </div>
-                      </div>
-                      <div className="pl-1">
-                        <div className="font-extrabold text-emerald-800">
-                          WHATSAPP HIZLI TEKLİF ONAYI
-                        </div>
-                        <div className="text-slate-700 mt-0.5">
-                          Sayın <strong>{pdfQuote.customerName}</strong>; onay için WhatsApp&apos;tan{" "}
-                          <strong>&quot;ONAYLIYORUM ({pdfQuote.orderCode})&quot;</strong> yazarak
-                          yanıt verebilirsiniz.
-                        </div>
-                      </div>
+                    <div className="bg-amber-50/70 border border-amber-300/80 rounded px-3 py-1.5 text-[9px]">
+                      <div className="font-extrabold text-slate-900">DÜZENLEYEN YETKİLİ (ELEKTRONİK TEKLİF)</div>
+                      <div className="text-slate-700 mt-0.5"><strong>{firmSettings.ownerName}</strong> — {firmSettings.companyName} • Dijital ortamda hazırlanmıştır.</div>
                     </div>
                   )}
 
