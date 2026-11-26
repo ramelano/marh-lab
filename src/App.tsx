@@ -1,4 +1,20 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import {
+  customerFromCloud,
+  fetchAdminTenants,
+  fetchTenant,
+  fetchTenantSnapshot,
+  flushCloudQueue,
+  persistTenants,
+  publishSyncStatus,
+  quoteFromCloud,
+  settingsFromCloud,
+  subscribeToCloudQueue,
+  syncTenantSnapshot,
+  tenantFromCloud,
+  uploadFirmLogo,
+} from "./lib/cloud-sync";
 import {
   Plus,
   Clock,
@@ -360,7 +376,7 @@ const INITIAL_QUOTES = [
 // 2. YARDIMCI BİLEŞENLER: iOS SWITCH & ANA EKRAN CAM BALKON SİSTEM VİTRİNİ
 // ============================================================================
 
-function IOSSwitch({ checked, onChange, label, sublabel, compact = false }) {
+function IOSSwitch({ checked, onChange, label, sublabel = "", compact = false }) {
   return (
     <label className="inline-flex items-center gap-2.5 cursor-pointer select-none group">
       <button
@@ -1379,6 +1395,9 @@ export default function App() {
   const [showcasePlaying, setShowcasePlaying] = useState(true);
   const [showcaseOpenness, setShowcaseOpenness] = useState(48);
   const [showcaseDirection, setShowcaseDirection] = useState(1);
+  const [cloudTenantId, setCloudTenantId] = useState("");
+  const [syncState, setSyncState] = useState(isSupabaseConfigured ? "syncing" : "local");
+  const [syncMessage, setSyncMessage] = useState("");
 
   const [firmSettings, setFirmSettings] = useState(() => {
     try {
@@ -1516,8 +1535,93 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`) || "[]"); } catch { return []; }
   });
   const [cuttingQuote, setCuttingQuote] = useState(null);
+  const [tenantCloudReady, setTenantCloudReady] = useState(false);
+  const [adminCloudReady, setAdminCloudReady] = useState(false);
 
   useEffect(() => { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.trash`, JSON.stringify(trash)); }, [trash, firmSettings.username]);
+
+  useEffect(() => {
+    const onStatus = (event) => {
+      setSyncState(event.detail?.status || "synced");
+      setSyncMessage(event.detail?.message || "");
+    };
+    window.addEventListener("marhlab:supabase-status", onStatus);
+    const stopQueue = subscribeToCloudQueue();
+    return () => { window.removeEventListener("marhlab:supabase-status", onStatus); stopQueue(); };
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "admin") { setAdminCloudReady(false); return; }
+    if (!supabase) { setAdminCloudReady(true); publishSyncStatus("local"); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await fetchAdminTenants();
+        if (cancelled) return;
+        const merged = new Map<string, any>(adminFirms.map((firm) => [firm.username.toLowerCase(), firm]));
+        remote.map(tenantFromCloud).forEach((firm) => merged.set(firm.username.toLowerCase(), { ...merged.get(firm.username.toLowerCase()), ...firm }));
+        setAdminFirms([...merged.values()]);
+        setAdminCloudReady(true);
+        publishSyncStatus("synced", "Firma kayıtları buluttan güncellendi.");
+      } catch (error) {
+        if (!cancelled) { setAdminCloudReady(true); publishSyncStatus("error", error instanceof Error ? error.message : "Firma kayıtları buluttan alınamadı."); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "admin" || !adminCloudReady || !supabase) return;
+    const timer = window.setTimeout(() => { void persistTenants(adminFirms); }, 500);
+    return () => window.clearTimeout(timer);
+  }, [adminFirms, adminCloudReady, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "member") { setTenantCloudReady(false); return; }
+    if (!supabase) { setTenantCloudReady(true); publishSyncStatus("local"); return; }
+    let cancelled = false;
+    const username = activeTenantUsername || firmSettings.username;
+    (async () => {
+      try {
+        const tenant = await fetchTenant(username);
+        if (!tenant) { if (!cancelled) { setTenantCloudReady(true); publishSyncStatus("queued", "Bu firma bulutta bulunamadı; yerel kayıtlar korunuyor."); } return; }
+        if (cancelled) return;
+        const snapshot = await fetchTenantSnapshot(tenant.id);
+        if (cancelled || !snapshot) return;
+        setCloudTenantId(tenant.id);
+        const prefix = `marhlab.tenant.${username}.`;
+        const remoteCustomers = snapshot.customers.map(customerFromCloud);
+        const remoteQuotes = snapshot.quotes.filter((row) => !row.is_deleted).map(quoteFromCloud);
+        const deletedQuotes = snapshot.quotes.filter((row) => row.is_deleted).map((row) => ({ type: "quote", deletedAt: row.deleted_at || new Date().toISOString(), data: quoteFromCloud(row) }));
+        const localCustomers = JSON.parse(localStorage.getItem(prefix + "customers") || "[]");
+        const localQuotes = JSON.parse(localStorage.getItem(prefix + "quotes") || "[]");
+        const localTrash = JSON.parse(localStorage.getItem(prefix + "trash") || "[]");
+        const customersByName = new Map(localCustomers.map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
+        remoteCustomers.forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
+        const quotesByCode = new Map(localQuotes.map((quote) => [quote.orderCode, quote]));
+        remoteQuotes.forEach((quote) => quotesByCode.set(quote.orderCode, quote));
+        const trashByCode = new Map(localTrash.map((entry) => [entry.data?.orderCode, entry]));
+        deletedQuotes.forEach((entry) => trashByCode.set(entry.data.orderCode, entry));
+        setFirmSettings(settingsFromCloud(snapshot.settings, firmSettings));
+        setCustomers([...customersByName.values()]);
+        setQuotes([...quotesByCode.values()]);
+        setTrash([...trashByCode.values()]);
+        setTenantCloudReady(true);
+        publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
+      } catch (error) {
+        if (!cancelled) { setTenantCloudReady(false); publishSyncStatus("error", error instanceof Error ? error.message : "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor."); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode, activeTenantUsername]);
+
+  useEffect(() => {
+    if (viewMode !== "member" || !tenantCloudReady || !cloudTenantId || !supabase) return;
+    const timer = window.setTimeout(() => {
+      void syncTenantSnapshot(cloudTenantId, firmSettings, customers, quotes, trash);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [viewMode, tenantCloudReady, cloudTenantId, firmSettings, customers, quotes, trash]);
 
   const activeSeriesObj = useMemo(
     () => SYSTEM_SERIES.find((s) => s.id === selectedSeriesId) || SYSTEM_SERIES[0],
@@ -1626,19 +1730,34 @@ export default function App() {
   const pendingQuotes = useMemo(() => quotes.filter((q) => q.status === "pending"), [quotes]);
   const approvedQuotes = useMemo(() => quotes.filter((q) => q.status === "approved"), [quotes]);
 
-  const handleLoginSubmit = (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault();
     const u = loginUser.trim();
     const p = loginPass.trim();
     if (u === "marhlab-admin" && p === "MarhLab!2026") {
       setLoginError("");
+      setAdminCloudReady(false);
       setShowLoginModal(false);
       setViewMode("admin");
       return;
     }
-    const firm = adminFirms.find((f) => f.username === u && (f.password || (u === "kondes_metal" ? "Kd!2026#92" : "")) === p);
+    let firm = adminFirms.find((f) => f.username.toLowerCase() === u.toLowerCase() && (f.password || (u === "kondes_metal" ? "Kd!2026#92" : "")) === p);
+    if (!firm && supabase && u && p) {
+      try {
+        const cloudFirm = await fetchTenant(u.toLowerCase());
+        if (cloudFirm?.password === p && cloudFirm.is_active !== false) {
+          firm = tenantFromCloud(cloudFirm);
+          setAdminFirms((prev) => [...prev.filter((item) => item.username.toLowerCase() !== u.toLowerCase()), firm]);
+        }
+      } catch {
+        publishSyncStatus("error", "Bulut giriş kontrolü başarısız; internet bağlantınızı kontrol edin.");
+      }
+    }
     if (firm) {
-      const normalized = u.toLowerCase(); setActiveTenantUsername(normalized);
+      const normalized = u.toLowerCase();
+      setActiveTenantUsername(normalized);
+      setCloudTenantId("");
+      setTenantCloudReady(false);
       const prefix = `marhlab.tenant.${normalized}.`;
       try {
         const settings = localStorage.getItem(prefix + "settings");
@@ -1859,13 +1978,44 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      setFirmSettings((prev) => ({
-        ...prev,
-        logoUrl: String(reader.result || ""),
-      }));
-      showToast("Firma logosu güncellendi! PDF çıktılarında aktif.");
+      const localLogo = String(reader.result || "");
+      setFirmSettings((prev) => ({ ...prev, logoUrl: localLogo }));
+      if (supabase) {
+        void (async () => {
+          try {
+            const tenant = cloudTenantId ? { id: cloudTenantId } : await fetchTenant(activeTenantUsername);
+            if (tenant?.id) {
+              const publicUrl = await uploadFirmLogo(tenant.id, file);
+              if (publicUrl) setFirmSettings((prev) => ({ ...prev, logoUrl: publicUrl }));
+            }
+            showToast("Firma logosu buluta yüklendi; PDF çıktılarında aktif.");
+          } catch {
+            showToast("Logo yerel olarak kaydedildi; Storage erişilemediği için cihazdaki sürüm kullanılacak.");
+          }
+        })();
+      } else showToast("Firma logosu güncellendi! PDF çıktılarında aktif.");
     };
     reader.readAsDataURL(file);
+  };
+
+  const syncLocalDataToCloud = async () => {
+    if (!supabase) {
+      publishSyncStatus("local", "Supabase ortam değişkenleri tanımlı değil; veriler bu cihazda tutuluyor.");
+      showToast("Supabase ayarı bulunamadı; yerel modda çalışmaya devam ediliyor.");
+      return;
+    }
+    try {
+      publishSyncStatus("syncing", "Yerel kayıtlar buluta aktarılıyor…");
+      const tenant = cloudTenantId ? { id: cloudTenantId } : await fetchTenant(activeTenantUsername);
+      if (!tenant?.id) throw new Error("Bu firma Supabase tenants tablosunda bulunamadı.");
+      setCloudTenantId(tenant.id);
+      await syncTenantSnapshot(tenant.id, firmSettings, customers, quotes, trash);
+      await flushCloudQueue();
+      showToast("Yerel firma verileri bulut eşitleme kuyruğuna aktarıldı.");
+    } catch (error) {
+      publishSyncStatus("error", error instanceof Error ? error.message : "Bulut aktarımı tamamlanamadı.");
+      showToast("Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor.");
+    }
   };
 
   const pdfTotals = useMemo(() => {
@@ -2533,6 +2683,23 @@ export default function App() {
                 </nav>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={syncLocalDataToCloud}
+                    title={syncMessage || (isSupabaseConfigured ? "Yerel verileri Supabase ile eşitle" : "Supabase ayarı yok; yerel mod etkin")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition ${
+                      syncState === "error" ? "bg-rose-500/10 border-rose-500/30 text-rose-300" :
+                      syncState === "queued" ? "bg-amber-500/10 border-amber-500/30 text-amber-300" :
+                      syncState === "synced" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" :
+                      "bg-slate-800 border-slate-700 text-slate-300"
+                    }`}
+                  >
+                    <DatabaseBackup className="w-3.5 h-3.5" />
+                    <span>Yerel Verileri Buluta Eşitle</span>
+                    <span className="border-l border-current/30 pl-1.5 text-[10px] opacity-80">
+                      {syncState === "syncing" ? "Eşitleniyor" : syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Kuyrukta" : syncState === "error" ? "Hata" : "Yerel mod"}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     onClick={openCurrentInPdf}
