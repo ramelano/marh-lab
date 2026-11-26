@@ -11,6 +11,9 @@ type ErrorBoundaryState = {
 function toError(value: unknown, fallback: string): Error {
   if (value instanceof Error) return value;
   if (typeof value === "string") return new Error(value);
+  if (value && typeof value === "object") {
+    try { return new Error(JSON.stringify(value)); } catch { return new Error(fallback); }
+  }
   return new Error(fallback);
 }
 

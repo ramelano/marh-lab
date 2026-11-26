@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "marhlab.supabase.pending.v1";
 const STATUS_EVENT = "marhlab:supabase-status";
 
-type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string; operation?: "upsert" | "delete"; filterId?: string };
+type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string; operation?: "upsert" | "delete"; filterId?: string; updatedAt?: string };
 export type CustomerRecord = { id: string; name: string; phone?: string; addresses?: string[]; address?: string; city?: string; district?: string; notes?: string };
 export type QuoteRecord = Record<string, any>;
 
@@ -28,6 +28,22 @@ function readQueue(): QueueJob[] {
 function writeQueue(queue: QueueJob[]) {
   try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); } catch { /* kota doluysa uygulama yine yerel çalışır */ }
 }
+function readableCloudError(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") { try { return JSON.stringify(error); } catch { return fallback; } }
+  return fallback;
+}
+function enqueue(job: QueueJob) {
+  const queue = readQueue();
+  const key = job.operation === "delete" ? `${job.table}:delete:${job.filterId}` : `${job.table}:upsert:${job.conflict}:${job.rows.map((row) => String(row[job.conflict] || row.id || "")).join(",")}`;
+  const index = queue.findIndex((item) => {
+    const itemKey = item.operation === "delete" ? `${item.table}:delete:${item.filterId}` : `${item.table}:upsert:${item.conflict}:${item.rows.map((row) => String(row[item.conflict] || row.id || "")).join(",")}`;
+    return itemKey === key;
+  });
+  if (index >= 0) queue[index] = job; else queue.push(job);
+  writeQueue(queue);
+}
 
 async function perform(job: QueueJob) {
   if (!supabase) return;
@@ -43,7 +59,7 @@ async function perform(job: QueueJob) {
 export async function queueUpsert(table: string, rows: Record<string, unknown>[], conflict: string) {
   if (!rows.length) return;
   if (!supabase || !navigator.onLine) {
-    writeQueue([...readQueue(), { id: crypto.randomUUID(), table, rows, conflict }]);
+    enqueue({ id: crypto.randomUUID(), table, rows, conflict, updatedAt: new Date().toISOString() });
     publishSyncStatus("queued", "Bağlantı yok; değişiklikler bu cihazda sıraya alındı.");
     return;
   }
@@ -52,22 +68,22 @@ export async function queueUpsert(table: string, rows: Record<string, unknown>[]
     await perform({ id: crypto.randomUUID(), table, rows, conflict });
     publishSyncStatus("synced");
   } catch (error) {
-    writeQueue([...readQueue(), { id: crypto.randomUUID(), table, rows, conflict }]);
-    publishSyncStatus("queued", error instanceof Error ? error.message : "Bulut bağlantısı geçici olarak kurulamadı.");
+    enqueue({ id: crypto.randomUUID(), table, rows, conflict, updatedAt: new Date().toISOString() });
+    publishSyncStatus("queued", readableCloudError(error, "Bulut bağlantısı geçici olarak kurulamadı."));
   }
 }
 
 export async function queueDelete(table: string, id: string) {
   const job: QueueJob = { id: crypto.randomUUID(), table, rows: [], conflict: "id", operation: "delete", filterId: id };
   if (!supabase || !navigator.onLine) {
-    writeQueue([...readQueue(), job]);
+    enqueue(job);
     publishSyncStatus("queued", "Silme işlemi bağlantı gelince buluta uygulanacak.");
     return;
   }
   try { await perform(job); publishSyncStatus("synced"); }
   catch (error) {
-    writeQueue([...readQueue(), job]);
-    publishSyncStatus("queued", error instanceof Error ? error.message : "Silme işlemi kuyruğa alındı.");
+    enqueue(job);
+    publishSyncStatus("queued", readableCloudError(error, "Silme işlemi kuyruğa alındı."));
   }
 }
 

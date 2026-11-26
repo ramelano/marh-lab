@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import {
   customerFromCloud,
@@ -375,6 +375,27 @@ const INITIAL_QUOTES = [
 // ============================================================================
 // 2. YARDIMCI BİLEŞENLER: iOS SWITCH & ANA EKRAN CAM BALKON SİSTEM VİTRİNİ
 // ============================================================================
+
+function readableError(error: unknown, fallback = "Beklenmeyen hata") {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    try { return JSON.stringify(error); } catch { return fallback; }
+  }
+  return fallback;
+}
+
+function NumericInput({ value, onChange, fallback = 0, ...props }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState(value === undefined || value === null ? "" : String(value));
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) setDraft(value === undefined || value === null ? "" : String(value));
+  }, [value]);
+  return <input ref={inputRef} {...props} type="number" value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => {
+    const parsed = Number(draft);
+    onChange(draft.trim() === "" || !Number.isFinite(parsed) ? fallback : parsed);
+  }} />;
+}
 
 function IOSSwitch({ checked, onChange, label, sublabel = "", compact = false }) {
   return (
@@ -1385,7 +1406,7 @@ const runtimeDataIssues: string[] = [];
 function reportAppDataIssue(source: string, error: unknown) {
   const detail = {
     source,
-    message: error instanceof Error ? error.message : String(error || "Veri güvenli varsayılana döndürüldü."),
+    message: readableError(error, "Veri güvenli varsayılana döndürüldü."),
   };
   runtimeDataIssues.push(`${source}: ${detail.message}`);
   console.error("MARH-LAB veri hatası:", detail);
@@ -1808,7 +1829,7 @@ export default function App() {
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
       } catch (error) {
-        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(false); publishSyncStatus("error", error instanceof Error ? error.message : "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor."); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(false); publishSyncStatus("error", readableError(error, "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor.")); }
       }
     })();
     return () => { cancelled = true; };
@@ -2167,8 +2188,7 @@ export default function App() {
       ),
       `Toplam Alan: *${financialSummary.totalArea.toFixed(2)} m²*`,
       `Genel Toplam (${vatIncluded ? "KDV Dahil" : "KDV Hariç"}): *₺${financialSummary.grandTotal.toLocaleString("tr-TR")}*`,
-      `Onaylamak için bu mesajı *ONAYLIYORUM (${qObj.orderCode})* yazarak yanıtlayabilirsiniz.`,
-    ];
+          ];
     navigator.clipboard?.writeText(lines.join("\n"));
     showToast("WhatsApp teklif özeti panoya kopyalandı!");
   };
@@ -2362,8 +2382,8 @@ export default function App() {
       await flushCloudQueue();
       showToast("Yerel firma verileri bulut eşitleme kuyruğuna aktarıldı.");
     } catch (error) {
-      publishSyncStatus("error", error instanceof Error ? error.message : "Bulut aktarımı tamamlanamadı.");
-      showToast(`Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor. ${error instanceof Error ? error.message : "Bağlantı veya yetki ayarlarını kontrol edin."}`);
+      publishSyncStatus("error", readableError(error, "Bulut aktarımı tamamlanamadı."));
+      showToast(`Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor. ${readableError(error, "Bağlantı veya yetki ayarlarını kontrol edin.")}`);
     }
   };
 
@@ -3298,10 +3318,9 @@ export default function App() {
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                       <div>
                         <label className="block text-[11px] text-slate-400 mb-1">Genişlik (cm)</label>
-                        <input
-                          type="number"
+                        <NumericInput
                           value={widthCm}
-                          onChange={(e) => setWidthCm(Number(e.target.value))}
+                          onChange={setWidthCm}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-white"
                         />
                       </div>
@@ -3309,10 +3328,9 @@ export default function App() {
                         <label className="block text-[11px] text-slate-400 mb-1">
                           Yükseklik (cm)
                         </label>
-                        <input
-                          type="number"
+                        <NumericInput
                           value={heightCm}
-                          onChange={(e) => setHeightCm(Number(e.target.value))}
+                          onChange={setHeightCm}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-white"
                         />
                       </div>
@@ -3322,12 +3340,11 @@ export default function App() {
                             ? "Yatay Cam Adedi"
                             : "Kanat / Cam Adedi"}
                         </label>
-                        <input
-                          type="number"
+                        <NumericInput
                           min="1"
                           max="14"
                           value={panels}
-                          onChange={(e) => setPanels(Math.max(1, Number(e.target.value)))}
+                          onChange={(value) => setPanels(Math.max(1, value))}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-white"
                         />
                       </div>
@@ -3350,11 +3367,10 @@ export default function App() {
                       <div><label className="block text-[11px] text-slate-400 mb-1">Kanat Toplanma Yönü</label><select value={openingDirection} onChange={e=>setOpeningDirection(e.target.value)} className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2 py-2 text-xs text-white"><option>Sola Toplanır</option><option>Sağa Toplanır</option><option>Ortadan İki Yana</option></select></div>
                       <div>
                         <label className="block text-[11px] text-slate-400 mb-1">Adet</label>
-                        <input
-                          type="number"
+                        <NumericInput
                           min="1"
                           value={quantity}
-                          onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
+                          onChange={(value) => setQuantity(Math.max(1, value))}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-amber-300"
                         />
                       </div>
@@ -3412,10 +3428,9 @@ export default function App() {
                         <label className="block text-[11px] text-slate-400 mb-1">
                           m² Satış Birim Fiyatı (₺)
                         </label>
-                        <input
-                          type="number"
+                        <NumericInput
                           value={customUnitPrice}
-                          onChange={(e) => setCustomUnitPrice(Number(e.target.value))}
+                          onChange={setCustomUnitPrice}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-xs font-bold text-white"
                         />
                       </div>
@@ -3447,7 +3462,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-amber-500/25 rounded-2xl p-4 space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold text-amber-400">Şantiye Mesafe, Ekip Masrafı & Hedef Net Kâr</h3><button onClick={()=>setSiteMode(!siteMode)} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-sky-300">{siteMode?"Şantiye Hızlı Mod: Açık":"Standart Görünüm / Şantiye Hızlı Mod"}</button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2"><label className="text-[11px] text-slate-400">Montaj Şehri<select value={siteCity} onChange={e=>{setSiteCity(e.target.value);const c=(firmSettings.cityTariffs||[]).find(x=>x.city===e.target.value);if(c){setTravelCost(Number(c.travel)||0);if(c.unitPrice>0)setCustomUnitPrice(Number(c.unitPrice));}}} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white">{(firmSettings.cityTariffs||[]).map(c=><option key={c.city}>{c.city}</option>)}</select></label><label className="text-[11px] text-slate-400">Yol / Nakliye ₺<input type="number" value={travelCost} onChange={e=>setTravelCost(Number(e.target.value))} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Eleman Sayısı<input type="number" min="1" value={teamSize} onChange={e=>setTeamSize(Number(e.target.value))} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Montaj Süresi (Gün)<input type="number" min="1" value={workDays} onChange={e=>setWorkDays(Number(e.target.value))} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><div className="text-[11px] text-slate-400">Toplam Ekip Masrafı <div className="mt-2 text-sm font-bold text-sky-300">₺{(teamSize*workDays*Number(firmSettings.dailyAllowance||0)).toLocaleString("tr-TR")}</div></div></div><div className="flex flex-wrap gap-2 items-center"><button onClick={()=>setPriceMode(priceMode==="unit"?"target":"unit")} className="rounded-lg bg-slate-800 px-3 py-2 text-xs text-white">Mod: {priceMode==="unit"?"Birim Fiyat / Kâr (%)":"Hedef Net Kâr (₺)"} • Değiştir</button>{priceMode==="target"?<label className="text-xs text-slate-300">Hedef net kâr ₺ <input type="number" value={targetProfit} onChange={e=>setTargetProfit(Number(e.target.value))} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-2 py-1.5 text-white"/></label>:null}<div className="text-xs text-slate-300">{(()=>{const cost=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);const profit=currentDraftItem.total-cost;return <>Toplam iç maliyet ₺{cost.toLocaleString("tr-TR")} • Net kâr ₺{profit.toLocaleString("tr-TR")} • Net marj %{(currentDraftItem.total?profit/currentDraftItem.total*100:0).toFixed(1)}</>;})()} <span className="text-slate-500">(müşteri belgesinde gösterilmez)</span></div>{priceMode==="target"&&<button onClick={()=>{const costs=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);setCustomUnitPrice(Math.ceil((costs+targetProfit)/Math.max(.01,currentDraftItem.areaM2)));}} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Hedefi Fiyata Uygula</button>}</div></div>
+                  <div className="bg-slate-900 border border-amber-500/25 rounded-2xl p-4 space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold text-amber-400">Şantiye Mesafe, Ekip Masrafı & Hedef Net Kâr</h3><button onClick={()=>setSiteMode(!siteMode)} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-sky-300">{siteMode?"Şantiye Hızlı Mod: Açık":"Standart Görünüm / Şantiye Hızlı Mod"}</button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2"><label className="text-[11px] text-slate-400">Montaj Şehri<select value={siteCity} onChange={e=>{setSiteCity(e.target.value);const c=(firmSettings.cityTariffs||[]).find(x=>x.city===e.target.value);if(c){setTravelCost(Number(c.travel)||0);if(c.unitPrice>0)setCustomUnitPrice(Number(c.unitPrice));}}} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white">{(firmSettings.cityTariffs||[]).map(c=><option key={c.city}>{c.city}</option>)}</select></label><label className="text-[11px] text-slate-400">Yol / Nakliye ₺<NumericInput value={travelCost} onChange={setTravelCost} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Eleman Sayısı<NumericInput min="1" value={teamSize} onChange={setTeamSize} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Montaj Süresi (Gün)<NumericInput min="1" value={workDays} onChange={setWorkDays} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><div className="text-[11px] text-slate-400">Toplam Ekip Masrafı <div className="mt-2 text-sm font-bold text-sky-300">₺{(teamSize*workDays*Number(firmSettings.dailyAllowance||0)).toLocaleString("tr-TR")}</div></div></div><div className="flex flex-wrap gap-2 items-center"><button onClick={()=>setPriceMode(priceMode==="unit"?"target":"unit")} className="rounded-lg bg-slate-800 px-3 py-2 text-xs text-white">Mod: {priceMode==="unit"?"Birim Fiyat / Kâr (%)":"Hedef Net Kâr (₺)"} • Değiştir</button>{priceMode==="target"?<label className="text-xs text-slate-300">Hedef net kâr ₺ <NumericInput value={targetProfit} onChange={setTargetProfit} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-2 py-1.5 text-white"/></label>:null}<div className="text-xs text-slate-300">{(()=>{const cost=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);const profit=currentDraftItem.total-cost;return <>Toplam iç maliyet ₺{cost.toLocaleString("tr-TR")} • Net kâr ₺{profit.toLocaleString("tr-TR")} • Net marj %{(currentDraftItem.total?profit/currentDraftItem.total*100:0).toFixed(1)}</>;})()} <span className="text-slate-500">(müşteri belgesinde gösterilmez)</span></div>{priceMode==="target"&&<button onClick={()=>{const costs=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);setCustomUnitPrice(Math.ceil((costs+targetProfit)/Math.max(.01,currentDraftItem.areaM2)));}} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Hedefi Fiyata Uygula</button>}</div></div>
                   {/* SEPETTEKİ ÇOKLU CEPHE KALEMLERİ */}
                   {basketItems.length > 0 && (
                     <div className="bg-slate-950/80 border border-amber-500/30 rounded-2xl p-3.5 space-y-2">
@@ -3962,7 +3977,7 @@ export default function App() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2">
-                              <input type="number" min="0" value={q.deposit || 0} onChange={(e) => setQuotes(prev => prev.map(x => x.id === q.id ? { ...x, deposit: Number(e.target.value) } : x))} placeholder="Kapora ₺" className="w-24 rounded-lg bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs text-white" />
+                              <NumericInput min="0" value={q.deposit || 0} onChange={(value) => setQuotes(prev => prev.map(x => x.id === q.id ? { ...x, deposit: value } : x))} placeholder="Kapora ₺" className="w-24 rounded-lg bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs text-white" />
                               <a href={whatsappHref(q)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold"><MessageCircle className="w-3.5 h-3.5" /> WhatsApp</a>
                               <button type="button" onClick={() => setCuttingQuote(q)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold"><Layers className="w-3.5 h-3.5" /> Kesim Listesi</button>
                             </div>
@@ -4212,7 +4227,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4"><div className="flex justify-between items-center"><h3 className="text-sm font-bold text-amber-400">Şehir Tarifeleri & Ekip Maliyeti</h3><button type="button" onClick={() => setFirmSettings(v => ({...v, cityTariffs:[...(v.cityTariffs||[]),{city:"",unitPrice:0,travel:0}]}))} className="px-3 py-1.5 rounded-lg bg-sky-500 text-slate-950 text-xs font-bold">+ Şehir Ekle</button></div>{(firmSettings.cityTariffs||[]).map((t,i)=><div key={i} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input placeholder="Şehir" value={t.city} onChange={e=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,city:e.target.value}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/><input type="number" placeholder="Baz ₺/m²" value={t.unitPrice} onChange={e=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,unitPrice:Number(e.target.value)}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/><input type="number" placeholder="Gidiş-dönüş yol ₺" value={t.travel} onChange={e=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,travel:Number(e.target.value)}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/></div>)}<label className="text-xs text-slate-300">Günlük eleman harcırahı (yevmiye + konaklama + yemek) ₺ <input type="number" value={firmSettings.dailyAllowance||0} onChange={e=>setFirmSettings(v=>({...v,dailyAllowance:Number(e.target.value)}))} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/></label></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4"><div className="flex justify-between items-center"><h3 className="text-sm font-bold text-amber-400">Şehir Tarifeleri & Ekip Maliyeti</h3><button type="button" onClick={() => setFirmSettings(v => ({...v, cityTariffs:[...(v.cityTariffs||[]),{city:"",unitPrice:0,travel:0}]}))} className="px-3 py-1.5 rounded-lg bg-sky-500 text-slate-950 text-xs font-bold">+ Şehir Ekle</button></div>{(firmSettings.cityTariffs||[]).map((t,i)=><div key={i} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input placeholder="Şehir" value={t.city} onChange={e=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,city:e.target.value}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/><NumericInput placeholder="Baz ₺/m²" value={t.unitPrice} onChange={(value)=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,unitPrice:value}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/><NumericInput placeholder="Gidiş-dönüş yol ₺" value={t.travel} onChange={(value)=>setFirmSettings(v=>({...v,cityTariffs:v.cityTariffs.map((x,n)=>n===i?{...x,travel:value}:x)}))} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/></div>)}<label className="text-xs text-slate-300">Günlük eleman harcırahı (yevmiye + konaklama + yemek) ₺ <NumericInput value={firmSettings.dailyAllowance||0} onChange={(value)=>setFirmSettings(v=>({...v,dailyAllowance:value}))} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"/></label></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
                     <div className="text-xs font-bold text-amber-400 uppercase">
