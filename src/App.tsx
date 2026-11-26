@@ -1380,6 +1380,169 @@ function optimizeProfileCuts(lengths, stockLength = 6000, kerf = 3) {
   return { bars, used, purchased, waste: Math.max(0,purchased-used), wastePct: purchased ? Math.max(0,(purchased-used)/purchased*100) : 0 };
 }
 
+const runtimeDataIssues: string[] = [];
+
+function reportAppDataIssue(source: string, error: unknown) {
+  const detail = {
+    source,
+    message: error instanceof Error ? error.message : String(error || "Veri güvenli varsayılana döndürüldü."),
+  };
+  runtimeDataIssues.push(`${source}: ${detail.message}`);
+  console.error("MARH-LAB veri hatası:", detail);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("marhlab:app-error", { detail }));
+  }
+}
+
+function readStoredArray<T>(key: string, fallback: T[], normalize: (value: any) => T): T[] {
+  try {
+    const saved = window.localStorage.getItem(key);
+    if (!saved) return fallback.map(normalize);
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed)) {
+      reportAppDataIssue(`Yerel kayıt (${key})`, new Error("Beklenen veri bir dizi değildi."));
+      return fallback.map(normalize);
+    }
+    return parsed.map((value: any, index: number) => {
+      try { return normalize(value); }
+      catch (error) {
+        reportAppDataIssue(`Yerel kayıt (${key}, satır ${index + 1})`, error);
+        return null;
+      }
+    }).filter((value: T | null): value is T => value !== null);
+  } catch (error) {
+    reportAppDataIssue(`Yerel kayıt (${key})`, error);
+    return fallback.map(normalize);
+  }
+}
+
+function readStoredObject(key: string) {
+  try {
+    const saved = window.localStorage.getItem(key);
+    if (!saved) return {};
+    const parsed = JSON.parse(saved);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    reportAppDataIssue(`Yerel kayıt (${key})`, new Error("Beklenen veri bir nesne değildi."));
+    return {};
+  } catch (error) {
+    reportAppDataIssue(`Yerel kayıt (${key})`, error);
+    return {};
+  }
+}
+
+function writeStoredValue(key: string, value: unknown) {
+  try { window.localStorage.setItem(key, JSON.stringify(value)); }
+  catch (error) { reportAppDataIssue(`Yerel kayıt (${key})`, error); }
+}
+
+function normalizeSettings(value: any, base = DEFAULT_FIRM_SETTINGS) {
+  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+    reportAppDataIssue("Firma ayarları", new Error("Ayarlar nesne biçiminde değil; geçerli varsayılanlar kullanıldı."));
+  }
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const stringFields = ["username", "companyName", "tagline", "ownerName", "phone", "email", "address", "orderPrefix", "logoUrl", "watermarkText", "password", "termsTemplate"] as const;
+  const numberFields = ["nextOrderNumber", "aluminumKgPrice", "defaultProfitMargin", "vatRate", "watermarkOpacity", "dailyAllowance"] as const;
+  const normalized = { ...base, ...source };
+  for (const key of stringFields) {
+    if (typeof source[key] === "string") normalized[key] = source[key];
+    else if (source[key] !== undefined) {
+      normalized[key] = base[key];
+      reportAppDataIssue("Firma ayarları", new Error(`${key} alanının türü geçersiz; varsayılan değer kullanıldı.`));
+    }
+  }
+  for (const key of numberFields) {
+    if (Number.isFinite(Number(source[key]))) normalized[key] = Number(source[key]);
+    else if (source[key] !== undefined) {
+      normalized[key] = base[key];
+      reportAppDataIssue("Firma ayarları", new Error(`${key} alanı sonlu bir sayı değil; varsayılan değer kullanıldı.`));
+    }
+  }
+  if (typeof source.showClassicSignatures === "boolean") normalized.showClassicSignatures = source.showClassicSignatures;
+  else if (source.showClassicSignatures !== undefined) {
+    normalized.showClassicSignatures = base.showClassicSignatures;
+    reportAppDataIssue("Firma ayarları", new Error("showClassicSignatures alanının türü geçersiz; varsayılan değer kullanıldı."));
+  }
+  if (source.cityTariffs !== undefined && !Array.isArray(source.cityTariffs)) {
+    reportAppDataIssue("Firma ayarları", new Error("cityTariffs bir liste değil; varsayılan şehir tarifeleri kullanıldı."));
+  }
+  const validTariffs = Array.isArray(source.cityTariffs) ? source.cityTariffs.filter((row: any) => row && typeof row === "object" && !Array.isArray(row)) : [];
+  if (Array.isArray(source.cityTariffs) && validTariffs.length !== source.cityTariffs.length) {
+    reportAppDataIssue("Firma ayarları", new Error("Geçersiz şehir tarifesi satırları atlandı."));
+  }
+  return {
+    ...normalized,
+    cityTariffs: Array.isArray(source.cityTariffs) ? validTariffs.map((row: any) => ({
+      city: String(row.city || ""),
+      unitPrice: Number.isFinite(Number(row.unitPrice)) ? Number(row.unitPrice) : 0,
+      travel: Number.isFinite(Number(row.travel)) ? Number(row.travel) : 0,
+    })) : base.cityTariffs,
+  };
+}
+
+function normalizeCustomer(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Müşteri kaydı", new Error("Kayıt nesne biçiminde değil; güvenli müşteri alanları kullanıldı."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (source.addresses !== undefined && !Array.isArray(source.addresses)) reportAppDataIssue("Müşteri kaydı", new Error("Adres listesi dizi değil; tekil adres varsa listeye dönüştürüldü."));
+  const addresses = Array.isArray(source.addresses) ? source.addresses : (source.address ? [source.address] : []);
+  return {
+    ...source,
+    id: String(source.id || `customer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    name: typeof source.name === "string" ? source.name : "Adsız müşteri",
+    phone: typeof source.phone === "string" ? source.phone : "",
+    addresses: addresses.filter((address: unknown): address is string => typeof address === "string"),
+  };
+}
+
+function normalizeQuoteItem(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Teklif kalemi", new Error("Kalem nesne biçiminde değil; güvenli varsayılanlar kullanıldı."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const numberOr = (input: unknown, fallback: number) => Number.isFinite(Number(input)) ? Number(input) : fallback;
+  return {
+    ...source,
+    id: String(source.id || `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    facadeName: typeof source.facadeName === "string" ? source.facadeName : "Adsız cephe",
+    widthCm: numberOr(source.widthCm, 0),
+    heightCm: numberOr(source.heightCm, 0),
+    panels: Math.max(1, numberOr(source.panels, 1)),
+    quantity: Math.max(1, numberOr(source.quantity, 1)),
+    unitPrice: numberOr(source.unitPrice, 0),
+  };
+}
+
+function normalizeQuote(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Teklif kaydı", new Error("Kayıt nesne biçiminde değil; güvenli teklif alanları kullanıldı."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (source.items !== undefined && !Array.isArray(source.items)) reportAppDataIssue("Teklif kaydı", new Error("Teklif kalemleri dizi değil; boş kalem listesi kullanıldı."));
+  return {
+    ...source,
+    id: String(source.id || `quote-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    orderCode: typeof source.orderCode === "string" ? source.orderCode : "KODSUZ",
+    customerName: typeof source.customerName === "string" ? source.customerName : "Sayın Müşteri",
+    customerPhone: typeof source.customerPhone === "string" ? source.customerPhone : "",
+    customerAddress: typeof source.customerAddress === "string" ? source.customerAddress : "",
+    items: Array.isArray(source.items) ? source.items.map(normalizeQuoteItem) : [],
+  };
+}
+
+function normalizeAdminFirm(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Firma kaydı", new Error("Kayıt nesne biçiminde değil; firma giriş alanları güvenli varsayılanlara döndürüldü."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { ...source, id: String(source.id || `firm-${Date.now()}`), username: typeof source.username === "string" ? source.username : "", companyName: typeof source.companyName === "string" ? source.companyName : "Adsız firma" };
+}
+
+function normalizeFinanceEntry(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Finans hareketi", new Error("Kayıt nesne biçiminde değil; güvenli finans alanları kullanıldı."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { ...source, id: String(source.id || `finance-${Date.now()}`), customerName: String(source.customerName || ""), kind: String(source.kind || "expense"), amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0, date: String(source.date || "") };
+}
+
+function normalizeTrashEntry(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Çöp kutusu kaydı", new Error("Kayıt nesne biçiminde değil; güvenli varsayılan kayıt oluşturuldu."));
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const data = source.type === "customer" ? normalizeCustomer(source.data) : normalizeQuote(source.data);
+  return { ...source, id: String(source.id || `trash-${Date.now()}`), type: source.type === "customer" ? "customer" : "quote", data };
+}
+
 // ============================================================================
 // 4. ANA UYGULAMA BİLEŞENİ (App)
 // ============================================================================
@@ -1398,50 +1561,45 @@ export default function App() {
   const [cloudTenantId, setCloudTenantId] = useState("");
   const [syncState, setSyncState] = useState(isSupabaseConfigured ? "syncing" : "local");
   const [syncMessage, setSyncMessage] = useState("");
+  const [runtimeNotice, setRuntimeNotice] = useState(() => runtimeDataIssues[0] || "");
+
+  useEffect(() => {
+    const onAppError = (event: CustomEvent<{ source?: string; message?: string }>) => {
+      setRuntimeNotice(`${event.detail?.source || "Uygulama verisi"}: ${event.detail?.message || "Beklenmeyen veri hatası."}`);
+    };
+    window.addEventListener("marhlab:app-error", onAppError as EventListener);
+    if (runtimeDataIssues.length) setRuntimeNotice(runtimeDataIssues[0]);
+    return () => window.removeEventListener("marhlab:app-error", onAppError as EventListener);
+  }, []);
 
   const [firmSettings, setFirmSettings] = useState(() => {
     try {
-      const saved = localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.settings`);
-      return saved ? { ...DEFAULT_FIRM_SETTINGS, ...JSON.parse(saved) } : DEFAULT_FIRM_SETTINGS;
-    } catch {
+      const saved = window.localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.settings`);
+      return saved ? normalizeSettings(JSON.parse(saved)) : normalizeSettings(DEFAULT_FIRM_SETTINGS);
+    } catch (error) {
+      reportAppDataIssue("Firma ayarları", error);
       return DEFAULT_FIRM_SETTINGS;
     }
   });
 
   const [customers, setCustomers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.customers`);
-      return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
-    } catch {
-      return INITIAL_CUSTOMERS;
-    }
+    return readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.customers`, INITIAL_CUSTOMERS, normalizeCustomer);
   });
 
   const [quotes, setQuotes] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.quotes`);
-      return saved ? JSON.parse(saved) : INITIAL_QUOTES;
-    } catch {
-      return INITIAL_QUOTES;
-    }
+    return readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.quotes`, INITIAL_QUOTES, normalizeQuote);
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem(`marhlab.tenant.${firmSettings.username}.settings`, JSON.stringify(firmSettings));
-    } catch {}
+    writeStoredValue(`marhlab.tenant.${firmSettings.username}.settings`, firmSettings);
   }, [firmSettings]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(`marhlab.tenant.${firmSettings.username}.customers`, JSON.stringify(customers));
-    } catch {}
+    writeStoredValue(`marhlab.tenant.${firmSettings.username}.customers`, customers);
   }, [customers]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(`marhlab.tenant.${firmSettings.username}.quotes`, JSON.stringify(quotes));
-    } catch {}
+    writeStoredValue(`marhlab.tenant.${firmSettings.username}.quotes`, quotes);
   }, [quotes]);
 
   useEffect(() => {
@@ -1515,11 +1673,8 @@ export default function App() {
   const [adminAnnouncement, setAdminAnnouncement] = useState("");
   const [showNewFirmForm, setShowNewFirmForm] = useState(false);
   const [newFirm, setNewFirm] = useState({ companyName: "", ownerName: "", username: "", password: "", phone: "", city: "", plan: "7 Günlük Demo" });
-  const [adminFirms, setAdminFirms] = useState(() => {
-    try { const saved = localStorage.getItem("marhlab.admin.firms.v1"); if (saved) return JSON.parse(saved); } catch {}
-    return [{ id: "f-1", username: "kondes_metal", password: "Kd!2026#92", companyName: "KON-DES METAL", ownerName: "Mustafa Duysak", phone: "0530 695 92 68", city: "Konya", plan: "Enterprise (12 Ay)", expiresAt: "01 Haz 2027" }];
-  });
-  useEffect(() => { try { localStorage.setItem("marhlab.admin.firms.v1", JSON.stringify(adminFirms)); } catch {} }, [adminFirms]);
+  const [adminFirms, setAdminFirms] = useState(() => readStoredArray("marhlab.admin.firms.v1", [{ id: "f-1", username: "kondes_metal", password: "Kd!2026#92", companyName: "KON-DES METAL", ownerName: "Mustafa Duysak", phone: "0530 695 92 68", city: "Konya", plan: "Enterprise (12 Ay)", expiresAt: "01 Haz 2027" }], normalizeAdminFirm));
+  useEffect(() => { writeStoredValue("marhlab.admin.firms.v1", adminFirms); }, [adminFirms]);
   useEffect(() => { setAdminFirms(prev => prev.map(f => f.username === firmSettings.username ? { ...f, companyName: firmSettings.companyName, ownerName: firmSettings.ownerName, phone: firmSettings.phone, city: siteCity } : f)); }, [firmSettings.companyName, firmSettings.ownerName, firmSettings.phone, firmSettings.username]);
   const [activeTenantUsername, setActiveTenantUsername] = useState(DEFAULT_FIRM_SETTINGS.username);
   const [siteCity, setSiteCity] = useState("Konya Merkez");
@@ -1533,12 +1688,8 @@ export default function App() {
   const [approvedStage, setApprovedStage] = useState("Tümü");
   const [customerSearch, setCustomerSearch] = useState("");
   const [financeCustomer, setFinanceCustomer] = useState(null);
-  const [financeEntries, setFinanceEntries] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.finance`) || "[]"); } catch { return []; }
-  });
-  const [deletedFinanceIds, setDeletedFinanceIds] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.deleted-finance`) || "[]"); } catch { return []; }
-  });
+  const [financeEntries, setFinanceEntries] = useState(() => readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.finance`, [], normalizeFinanceEntry));
+  const [deletedFinanceIds, setDeletedFinanceIds] = useState(() => readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.deleted-finance`, [], (value) => String(value)));
   const [financeCloudEnabled, setFinanceCloudEnabled] = useState(false);
   const [financeAmount, setFinanceAmount] = useState("");
   const [financeKind, setFinanceKind] = useState("income");
@@ -1553,16 +1704,14 @@ export default function App() {
   const [ledgerDate, setLedgerDate] = useState(new Date().toISOString().slice(0, 10));
   const [ledgerDescription, setLedgerDescription] = useState("");
   const [ledgerCustomerName, setLedgerCustomerName] = useState("");
-  const [trash, setTrash] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`) || "[]"); } catch { return []; }
-  });
+  const [trash, setTrash] = useState(() => readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`, [], normalizeTrashEntry));
   const [cuttingQuote, setCuttingQuote] = useState(null);
   const [tenantCloudReady, setTenantCloudReady] = useState(false);
   const [adminCloudReady, setAdminCloudReady] = useState(false);
 
-  useEffect(() => { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.trash`, JSON.stringify(trash)); }, [trash, firmSettings.username]);
-  useEffect(() => { try { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.finance`, JSON.stringify(financeEntries)); } catch {} }, [financeEntries, firmSettings.username]);
-  useEffect(() => { try { localStorage.setItem(`marhlab.tenant.${firmSettings.username}.deleted-finance`, JSON.stringify(deletedFinanceIds)); } catch {} }, [deletedFinanceIds, firmSettings.username]);
+  useEffect(() => { writeStoredValue(`marhlab.tenant.${firmSettings.username}.trash`, trash); }, [trash, firmSettings.username]);
+  useEffect(() => { writeStoredValue(`marhlab.tenant.${firmSettings.username}.finance`, financeEntries); }, [financeEntries, firmSettings.username]);
+  useEffect(() => { writeStoredValue(`marhlab.tenant.${firmSettings.username}.deleted-finance`, deletedFinanceIds); }, [deletedFinanceIds, firmSettings.username]);
 
   useEffect(() => {
     const onStatus = (event) => {
@@ -1582,13 +1731,13 @@ export default function App() {
       try {
         const remote = await fetchAdminTenants();
         if (cancelled) return;
-        const merged = new Map<string, any>(adminFirms.map((firm) => [firm.username.toLowerCase(), firm]));
-        remote.map(tenantFromCloud).forEach((firm) => merged.set(firm.username.toLowerCase(), { ...merged.get(firm.username.toLowerCase()), ...firm }));
+        const merged = new Map<string, any>(adminFirms.filter((firm) => typeof firm.username === "string").map((firm) => [firm.username.toLowerCase(), firm]));
+        (Array.isArray(remote) ? remote : []).map(tenantFromCloud).map(normalizeAdminFirm).forEach((firm) => merged.set(firm.username.toLowerCase(), { ...merged.get(firm.username.toLowerCase()), ...firm }));
         setAdminFirms([...merged.values()]);
         setAdminCloudReady(true);
         publishSyncStatus("synced", "Firma kayıtları buluttan güncellendi.");
       } catch (error) {
-        if (!cancelled) { setAdminCloudReady(true); publishSyncStatus("error", error instanceof Error ? error.message : "Firma kayıtları buluttan alınamadı."); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma kayıtları", error); setAdminCloudReady(true); publishSyncStatus("error", error instanceof Error ? error.message : "Firma kayıtları buluttan alınamadı."); }
       }
     })();
     return () => { cancelled = true; };
@@ -1614,12 +1763,14 @@ export default function App() {
         if (cancelled || !snapshot) return;
         setCloudTenantId(tenant.id);
         const prefix = `marhlab.tenant.${username}.`;
-        const remoteCustomers = snapshot.customers.filter((row) => !row.is_deleted).map(customerFromCloud);
-        const remoteQuotes = snapshot.quotes.filter((row) => !row.is_deleted).map(quoteFromCloud);
-        const deletedQuotes = snapshot.quotes.filter((row) => row.is_deleted).map((row) => ({ type: "quote", deletedAt: row.deleted_at || new Date().toISOString(), data: quoteFromCloud(row) }));
-        const localCustomers = JSON.parse(localStorage.getItem(prefix + "customers") || "[]");
-        const localQuotes = JSON.parse(localStorage.getItem(prefix + "quotes") || "[]");
-        const localTrash = JSON.parse(localStorage.getItem(prefix + "trash") || "[]");
+        const cloudCustomers = Array.isArray(snapshot.customers) ? snapshot.customers : [];
+        const cloudQuotes = Array.isArray(snapshot.quotes) ? snapshot.quotes : [];
+        const remoteCustomers = cloudCustomers.filter((row) => row && !row.is_deleted).map(customerFromCloud).map(normalizeCustomer);
+        const remoteQuotes = cloudQuotes.filter((row) => row && !row.is_deleted).map(quoteFromCloud).map(normalizeQuote);
+        const deletedQuotes = cloudQuotes.filter((row) => row && row.is_deleted).map((row) => ({ type: "quote", deletedAt: row.deleted_at || new Date().toISOString(), data: normalizeQuote(quoteFromCloud(row)) }));
+        const localCustomers = readStoredArray(prefix + "customers", [], normalizeCustomer);
+        const localQuotes = readStoredArray(prefix + "quotes", [], normalizeQuote);
+        const localTrash = readStoredArray(prefix + "trash", [], normalizeTrashEntry);
         const deletedCustomerNames = new Set(localTrash.filter((entry) => entry.type === "customer").map((entry) => String(entry.data?.name || "").toLocaleLowerCase("tr")));
         const customersByName = new Map(localCustomers.map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
         remoteCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
@@ -1627,30 +1778,37 @@ export default function App() {
         remoteQuotes.forEach((quote) => quotesByCode.set(quote.orderCode, quote));
         const trashByCode = new Map(localTrash.map((entry, index) => [`${entry.type || "quote"}:${entry.data?.orderCode || entry.data?.id || index}`, entry]));
         deletedQuotes.forEach((entry) => trashByCode.set(entry.data.orderCode, entry));
-        setFirmSettings(settingsFromCloud(snapshot.settings, firmSettings));
+        setFirmSettings(normalizeSettings(settingsFromCloud(snapshot.settings, firmSettings), firmSettings));
         setCustomers([...customersByName.values()]);
         setQuotes([...quotesByCode.values()]);
         setTrash([...trashByCode.values()]);
         setFinanceCloudEnabled(snapshot.financeCloudEnabled);
         if (snapshot.financeCloudEnabled) {
-          const localFinance = JSON.parse(localStorage.getItem(prefix + "finance") || "[]");
-          const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
-          snapshot.financeEntries.forEach((entry) => mergedFinance.set(entry.id, {
-            id: entry.id,
-            customerId: entry.customer_id || "",
-            customerName: entry.customer_name || "",
-            quoteCode: entry.quote_code || "",
-            kind: entry.kind,
-            amount: Number(entry.amount || 0),
-            date: entry.transaction_date,
-            description: entry.description || "",
-          }));
+        const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
+        const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
+          const cloudFinanceEntries = (Array.isArray(snapshot.financeEntries) ? snapshot.financeEntries : []).flatMap((entry, index) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+              reportAppDataIssue(`Bulut finans satırı ${index + 1}`, new Error("Kayıt nesne biçiminde değil; bu satır atlandı."));
+              return [];
+            }
+            return [normalizeFinanceEntry({
+              id: entry.id,
+              customerId: entry.customer_id || "",
+              customerName: entry.customer_name || "",
+              quoteCode: entry.quote_code || "",
+              kind: entry.kind,
+              amount: entry.amount,
+              date: entry.transaction_date,
+              description: entry.description || "",
+            })];
+          });
+          cloudFinanceEntries.forEach((entry) => mergedFinance.set(entry.id, entry));
           setFinanceEntries([...mergedFinance.values()].filter((entry) => !deletedFinanceIds.includes(entry.id)));
         }
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
       } catch (error) {
-        if (!cancelled) { setTenantCloudReady(false); publishSyncStatus("error", error instanceof Error ? error.message : "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor."); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(false); publishSyncStatus("error", error instanceof Error ? error.message : "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor."); }
       }
     })();
     return () => { cancelled = true; };
@@ -1737,8 +1895,9 @@ export default function App() {
   ]);
 
   const effectiveItems = useMemo(() => {
-    if (basketItems.length > 0) return basketItems;
-    return [currentDraftItem];
+    const safeBasketItems = Array.isArray(basketItems) ? basketItems.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+    if (safeBasketItems.length > 0) return safeBasketItems.map(normalizeQuoteItem);
+    return [normalizeQuoteItem(currentDraftItem)];
   }, [basketItems, currentDraftItem]);
 
   const calcQuoteTotals = (items, discount = 0, vat = false) => {
@@ -1796,7 +1955,7 @@ export default function App() {
     (!ledgerDateFilter || entry.date === ledgerDateFilter)
   ).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const visibleCustomers = sortedCustomers.filter((customer) =>
-    `${customer.name} ${customer.phone || ""} ${customer.city || ""} ${customer.district || ""} ${customer.address || ""} ${(customer.addresses || []).join(" ")}`.toLocaleLowerCase("tr").includes(customerSearch.toLocaleLowerCase("tr"))
+    `${customer.name} ${customer.phone || ""} ${customer.city || ""} ${customer.district || ""} ${customer.address || ""} ${(Array.isArray(customer.addresses) ? customer.addresses : []).join(" ")}`.toLocaleLowerCase("tr").includes(customerSearch.toLocaleLowerCase("tr"))
   );
   const nextAvailableOrderCode = (quotesToCheck = quotes, trashToCheck = trash, numberFloor = firmSettings.nextOrderNumber) => {
     const allQuotes = [...quotesToCheck, ...trashToCheck.map((entry) => entry.data).filter(Boolean)];
@@ -1823,15 +1982,16 @@ export default function App() {
       setViewMode("admin");
       return;
     }
-    let firm = adminFirms.find((f) => f.username.toLowerCase() === u.toLowerCase() && (f.password || (u === "kondes_metal" ? "Kd!2026#92" : "")) === p);
+    let firm = adminFirms.find((f) => typeof f.username === "string" && f.username.toLowerCase() === u.toLowerCase() && (f.password || (u === "kondes_metal" ? "Kd!2026#92" : "")) === p);
     if (!firm && supabase && u && p) {
       try {
         const cloudFirm = await fetchTenant(u.toLowerCase());
         if (cloudFirm?.password === p && cloudFirm.is_active !== false) {
-          firm = tenantFromCloud(cloudFirm);
+          firm = normalizeAdminFirm(tenantFromCloud(cloudFirm));
           setAdminFirms((prev) => [...prev.filter((item) => item.username.toLowerCase() !== u.toLowerCase()), firm]);
         }
       } catch {
+        reportAppDataIssue("Bulut giriş kontrolü", new Error("Bulut giriş kontrolü başarısız; internet bağlantınızı kontrol edin."));
         publishSyncStatus("error", "Bulut giriş kontrolü başarısız; internet bağlantınızı kontrol edin.");
       }
     }
@@ -1841,16 +2001,14 @@ export default function App() {
       setCloudTenantId("");
       setTenantCloudReady(false);
       const prefix = `marhlab.tenant.${normalized}.`;
-      try {
-        const settings = localStorage.getItem(prefix + "settings");
-        setFirmSettings({ ...DEFAULT_FIRM_SETTINGS, username: normalized, companyName: firm.companyName, ownerName: firm.ownerName || "", phone: firm.phone || "", address: firm.address || "", password: p, ...(settings ? JSON.parse(settings) : {}) });
-        setCustomers(JSON.parse(localStorage.getItem(prefix + "customers") || "[]"));
-        setQuotes(JSON.parse(localStorage.getItem(prefix + "quotes") || "[]"));
-        setTrash(JSON.parse(localStorage.getItem(prefix + "trash") || "[]"));
-        setFinanceEntries(JSON.parse(localStorage.getItem(prefix + "finance") || "[]"));
-        setDeletedFinanceIds(JSON.parse(localStorage.getItem(prefix + "deleted-finance") || "[]"));
-        setFinanceCloudEnabled(false);
-      } catch {}
+      const storedSettings = readStoredObject(prefix + "settings");
+      setFirmSettings(normalizeSettings({ ...DEFAULT_FIRM_SETTINGS, username: normalized, companyName: firm.companyName, ownerName: firm.ownerName || "", phone: firm.phone || "", address: firm.address || "", password: p, ...storedSettings }));
+      setCustomers(readStoredArray(prefix + "customers", [], normalizeCustomer));
+      setQuotes(readStoredArray(prefix + "quotes", [], normalizeQuote));
+      setTrash(readStoredArray(prefix + "trash", [], normalizeTrashEntry));
+      setFinanceEntries(readStoredArray(prefix + "finance", [], normalizeFinanceEntry));
+      setDeletedFinanceIds(readStoredArray(prefix + "deleted-finance", [], (value) => String(value)));
+      setFinanceCloudEnabled(false);
       setLoginError(""); setShowLoginModal(false); setViewMode("member"); return;
     }
     setLoginError("Kullanıcı adı veya şifre hatalı.");
@@ -1902,10 +2060,10 @@ export default function App() {
       if (existingIdx >= 0) {
         const updated = [...prev];
         const curr = updated[existingIdx];
-        const nextAddresses =
-          address && !curr.addresses.includes(address)
-            ? [...curr.addresses, address]
-            : curr.addresses;
+        const currentAddresses = Array.isArray(curr.addresses) ? curr.addresses : [];
+        const nextAddresses = address && !currentAddresses.includes(address)
+          ? [...currentAddresses, address]
+          : currentAddresses;
         updated[existingIdx] = {
           ...curr,
           phone: phone || curr.phone,
@@ -2001,7 +2159,7 @@ export default function App() {
       `*${firmSettings.companyName} — FİYAT TEKLİFİ (${qObj.orderCode})*`,
       `Sayın *${qObj.customerName}*,`,
       `Proje: ${qObj.projectTitle}`,
-      ...qObj.items.map(
+      ...(Array.isArray(qObj?.items) ? qObj.items : []).map(
         (it, idx) =>
           `${idx + 1}. ${it.facadeName}: ${it.seriesName} (${it.widthCm}×${it.heightCm} cm, ${it.panels} Cam, ${it.quantity} Adet)`
       ),
@@ -2013,13 +2171,42 @@ export default function App() {
     showToast("WhatsApp teklif özeti panoya kopyalandı!");
   };
 
-  const quoteTotal = (q) => calcQuoteTotals(q.items || [], q.discountPercent, q.vatIncluded).grandTotal;
+  const quoteTotal = (q) => calcQuoteTotals(Array.isArray(q?.items) ? q.items : [], q?.discountPercent, q?.vatIncluded).grandTotal;
   const whatsappHref = (q) => `https://wa.me/${(q.customerPhone || "").replace(/\D/g, "").replace(/^0/, "90")}?text=${encodeURIComponent(`${firmSettings.companyName} ${q.orderCode} teklifiniz: ₺${quoteTotal(q).toLocaleString("tr-TR")}`)}`;
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify({ firmSettings, customers, quotes, trash }, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${firmSettings.username}-marhlab-yedek.json`; a.click(); URL.revokeObjectURL(a.href);
   };
-  const importBackup = (e) => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { const d = JSON.parse(String(r.result)); if (d.firmSettings) setFirmSettings({ ...DEFAULT_FIRM_SETTINGS, ...d.firmSettings }); if (d.customers) setCustomers(d.customers); if (d.quotes) setQuotes(d.quotes); if (d.trash) setTrash(d.trash); showToast("Yedek başarıyla içe aktarıldı."); } catch { showToast("Geçersiz yedek dosyası."); } }; r.readAsText(file); };
+  const importBackup = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Yedek dosyasının üst düzeyi nesne olmalıdır.");
+        if (data.firmSettings) setFirmSettings(normalizeSettings(data.firmSettings));
+        if (data.customers !== undefined) {
+          if (Array.isArray(data.customers)) setCustomers(data.customers.map(normalizeCustomer));
+          else reportAppDataIssue("Yedek içe aktarma", new Error("Müşteri listesi dizi değil; mevcut liste korundu."));
+        }
+        if (data.quotes !== undefined) {
+          if (Array.isArray(data.quotes)) setQuotes(data.quotes.map(normalizeQuote));
+          else reportAppDataIssue("Yedek içe aktarma", new Error("Teklif listesi dizi değil; mevcut liste korundu."));
+        }
+        if (data.trash !== undefined) {
+          if (Array.isArray(data.trash)) setTrash(data.trash.map(normalizeTrashEntry));
+          else reportAppDataIssue("Yedek içe aktarma", new Error("Çöp kutusu listesi dizi değil; mevcut liste korundu."));
+        }
+        showToast("Yedek başarıyla içe aktarıldı.");
+      } catch (error) {
+        reportAppDataIssue("Yedek içe aktarma", error);
+        showToast("Geçersiz yedek dosyası; hata ayrıntısı ekranda gösterildi.");
+      }
+    };
+    reader.onerror = () => reportAppDataIssue("Yedek dosyası", reader.error || new Error("Dosya okunamadı."));
+    reader.readAsText(file);
+  };
 
   const loadQuoteIntoStudio = (q) => {
     setEditingQuoteId(q.id);
@@ -2181,13 +2368,14 @@ export default function App() {
 
   const pdfTotals = useMemo(() => {
     if (!pdfQuote) return null;
-    return calcQuoteTotals(pdfQuote.items || [], pdfQuote.discountPercent, pdfQuote.vatIncluded);
+    return calcQuoteTotals(Array.isArray(pdfQuote.items) ? pdfQuote.items : [], pdfQuote.discountPercent, pdfQuote.vatIncluded);
   }, [pdfQuote, firmSettings.vatRate]);
 
-  const activeShowcase = SHOWCASE_SYSTEMS[showcaseIndex];
+  const activeShowcase = SHOWCASE_SYSTEMS[showcaseIndex] || SHOWCASE_SYSTEMS[0];
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 flex flex-col">
+      {runtimeNotice && <div className="no-print mx-auto mt-3 w-[min(96%,1000px)] rounded-xl border border-amber-500/60 bg-amber-950/80 p-4 text-amber-100 shadow-xl" role="alert" aria-live="assertive"><div className="flex items-start justify-between gap-3"><div><div className="font-bold">Uygulama veri uyarısı</div><p className="mt-1 whitespace-pre-wrap break-words text-sm">{runtimeNotice}</p><p className="mt-2 text-xs text-amber-200/80">Güvenli varsayılan verilerle devam edildi. Sorun sürerse hata metnini destek ekibinizle paylaşın.</p></div><button type="button" className="rounded-lg px-2 py-1 text-amber-100 hover:bg-amber-900" aria-label="Uyarıyı kapat" onClick={() => setRuntimeNotice("")}>Kapat</button></div></div>}
       {/* KESİN TEK SAYFA DİKEY A4 YAZDIRMA (@media print) STİL KİLİDİ */}
       <style>{`
         @media print {
@@ -2392,7 +2580,7 @@ export default function App() {
               </p>
 
               <div className="flex flex-wrap gap-2.5">
-                {activeShowcase.badges.map((badge, idx) => (
+                {(activeShowcase?.badges || []).map((badge, idx) => (
                   <span
                     key={idx}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-amber-500/30 text-amber-200 text-xs font-semibold"
@@ -2680,7 +2868,7 @@ export default function App() {
                     </span>
                     <h3 className="text-xl font-extrabold text-white">{pkg.name}</h3>
                     <ul className="space-y-2 pt-2">
-                      {pkg.features.map((feat, fIdx) => (
+                      {(Array.isArray(pkg?.features) ? pkg.features : []).map((feat, fIdx) => (
                         <li key={fIdx} className="flex items-center gap-2 text-xs text-slate-300">
                           <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                           <span>{feat}</span>
@@ -2910,7 +3098,7 @@ export default function App() {
                     </div>
                     <span className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold">
                       {effectiveItems.length} Cephe /{" "}
-                      {effectiveItems.reduce((a, b) => a + b.quantity, 0)} Adet
+                      {effectiveItems.reduce((total, item) => total + (Number.isFinite(Number(item?.quantity)) ? Number(item.quantity) : 0), 0)} Adet
                     </span>
                   </div>
 
@@ -3047,7 +3235,7 @@ export default function App() {
                       />
                       {selectedArchiveCustomer?.addresses?.length > 0 && !customerAddress && (
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {selectedArchiveCustomer.addresses.map((addr, i) => (
+                          {(Array.isArray(selectedArchiveCustomer.addresses) ? selectedArchiveCustomer.addresses : []).map((addr, i) => (
                             <button
                               key={i}
                               type="button"
@@ -3586,7 +3774,7 @@ export default function App() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {pendingQuotes.map((q) => {
-                      const total = q.items.reduce(
+                      const total = (Array.isArray(q?.items) ? q.items : []).reduce(
                         (a, it) =>
                           a +
                           Math.round(
@@ -3705,7 +3893,7 @@ export default function App() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {approvedQuotes.filter((q) => (approvedStage === "Tümü" || (q.productionStage || "Üretimde") === approvedStage) && `${q.orderCode} ${q.customerName}`.toLocaleLowerCase("tr").includes(approvedSearch.toLocaleLowerCase("tr"))).map((q) => {
-                      const total = q.items.reduce(
+                      const total = (Array.isArray(q?.items) ? q.items : []).reduce(
                         (a, it) =>
                           a +
                           Math.round(
@@ -3829,14 +4017,14 @@ export default function App() {
                         <div className="flex items-center justify-between">
                           <h3 className="text-sm font-bold text-white">{c.name}</h3>
                           <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">
-                            {(c.addresses || []).length} Şantiye
+                            {(Array.isArray(c.addresses) ? c.addresses : []).length} Şantiye
                           </span>
                         </div>
                         <div className="text-xs text-slate-400 flex items-center gap-1.5">
                           <Phone className="w-3.5 h-3.5 text-amber-400" />
                           {c.phone || "Telefon yok"}
                         </div>
-                        {(c.addresses || []).map((addr, idx) => (
+                        {(Array.isArray(c.addresses) ? c.addresses : []).map((addr, idx) => (
                           <div
                             key={idx}
                             className="text-[11px] text-slate-400 flex items-start gap-1.5"
@@ -4388,7 +4576,7 @@ export default function App() {
         </div>
       )}
 
-      {cuttingQuote && <div className="no-print fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-white">Atölye Kesim Listesi — {cuttingQuote.orderCode}</h3><button onClick={() => setCuttingQuote(null)} className="text-slate-400"><X className="w-4 h-4" /></button></div><div className="overflow-auto"><table className="w-full text-xs"><thead><tr className="text-slate-400 border-b border-slate-700"><th className="text-left p-2">Cephe</th><th className="text-left p-2">Net Cam</th><th className="text-left p-2">Alüminyum Profil</th></tr></thead><tbody>{cuttingQuote.items.map(it => <tr key={it.id} className="border-b border-slate-800"><td className="p-2 text-white">{it.facadeName}</td><td className="p-2 text-sky-300">{Math.round(it.widthCm * 10 / Math.max(1,it.panels)) - 20} × {Number(it.heightCm)*10-40} mm × {it.panels} adet</td><td className="p-2 text-amber-300">Üst/alt: {Number(it.widthCm)*10} mm • Dikme: {Number(it.heightCm)*10} mm</td></tr>)}</tbody></table></div><div className="space-y-3"><h4 className="text-xs font-extrabold uppercase tracking-wide text-amber-400">6.000 mm Standart Boy Profil Optimizasyonu (3 mm testere payı dahil)</h4>{cuttingQuote.items.map(it=>{const w=Math.round(Number(it.widthCm)*10),h=Math.round(Number(it.heightCm)*10),n=Math.max(1,Number(it.panels)||1);const plans=[{name:"Kasa üst / alt",lengths:[w,w]},{name:"Kasa yan dikme",lengths:[h,h]},{name:"Kanat dikey kayıt",lengths:Array(n*2).fill(Math.max(0,h-80))},{name:"Baza",lengths:[w]}];return <div key={it.id+"-plan"} className="rounded-xl border border-slate-800 overflow-hidden"><div className="px-3 py-2 bg-slate-950 text-white text-xs font-bold">{it.facadeName} — mm cinsinden kesim yerleşimi</div><div className="overflow-x-auto"><table className="w-full text-[11px]"><thead className="text-slate-400"><tr><th className="text-left p-2">Profil grubu</th><th className="text-left p-2">Kesimler (mm)</th><th className="text-right p-2">6 m boy</th><th className="text-right p-2">Tahmini fire</th></tr></thead><tbody>{plans.map(pl=>{const r=optimizeProfileCuts(pl.lengths);return <tr key={pl.name} className="border-t border-slate-800"><td className="p-2 text-slate-200">{pl.name}</td><td className="p-2 text-sky-300">{pl.lengths.join(" + ")} mm</td><td className="p-2 text-right text-white">{r.bars.length} boy</td><td className="p-2 text-right text-amber-300">{r.wastePct.toFixed(1)}% ({Math.round(r.waste)} mm)</td></tr>})}</tbody></table></div></div>})}<p className="text-[10px] text-slate-500">Tahmini şematik optimizasyondur; profil sistemine göre kanal/bağlantı payları ve gerçek testere kerfi atölyede kontrol edilmelidir.</p></div><button onClick={() => window.print()} className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold">Yazdır</button></div></div>}
+      {cuttingQuote && <div className="no-print fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-white">Atölye Kesim Listesi — {cuttingQuote.orderCode}</h3><button onClick={() => setCuttingQuote(null)} className="text-slate-400"><X className="w-4 h-4" /></button></div><div className="overflow-auto"><table className="w-full text-xs"><thead><tr className="text-slate-400 border-b border-slate-700"><th className="text-left p-2">Cephe</th><th className="text-left p-2">Net Cam</th><th className="text-left p-2">Alüminyum Profil</th></tr></thead><tbody>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it => <tr key={it.id} className="border-b border-slate-800"><td className="p-2 text-white">{it.facadeName}</td><td className="p-2 text-sky-300">{Math.round(it.widthCm * 10 / Math.max(1,it.panels)) - 20} × {Number(it.heightCm)*10-40} mm × {it.panels} adet</td><td className="p-2 text-amber-300">Üst/alt: {Number(it.widthCm)*10} mm • Dikme: {Number(it.heightCm)*10} mm</td></tr>)}</tbody></table></div><div className="space-y-3"><h4 className="text-xs font-extrabold uppercase tracking-wide text-amber-400">6.000 mm Standart Boy Profil Optimizasyonu (3 mm testere payı dahil)</h4>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it=>{const w=Math.round(Number(it.widthCm)*10),h=Math.round(Number(it.heightCm)*10),n=Math.max(1,Number(it.panels)||1);const plans=[{name:"Kasa üst / alt",lengths:[w,w]},{name:"Kasa yan dikme",lengths:[h,h]},{name:"Kanat dikey kayıt",lengths:Array(n*2).fill(Math.max(0,h-80))},{name:"Baza",lengths:[w]}];return <div key={it.id+"-plan"} className="rounded-xl border border-slate-800 overflow-hidden"><div className="px-3 py-2 bg-slate-950 text-white text-xs font-bold">{it.facadeName} — mm cinsinden kesim yerleşimi</div><div className="overflow-x-auto"><table className="w-full text-[11px]"><thead className="text-slate-400"><tr><th className="text-left p-2">Profil grubu</th><th className="text-left p-2">Kesimler (mm)</th><th className="text-right p-2">6 m boy</th><th className="text-right p-2">Tahmini fire</th></tr></thead><tbody>{plans.map(pl=>{const r=optimizeProfileCuts(pl.lengths);return <tr key={pl.name} className="border-t border-slate-800"><td className="p-2 text-slate-200">{pl.name}</td><td className="p-2 text-sky-300">{pl.lengths.join(" + ")} mm</td><td className="p-2 text-right text-white">{r.bars.length} boy</td><td className="p-2 text-right text-amber-300">{r.wastePct.toFixed(1)}% ({Math.round(r.waste)} mm)</td></tr>})}</tbody></table></div></div>})}<p className="text-[10px] text-slate-500">Tahmini şematik optimizasyondur; profil sistemine göre kanal/bağlantı payları ve gerçek testere kerfi atölyede kontrol edilmelidir.</p></div><button onClick={() => window.print()} className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold">Yazdır</button></div></div>}
 
       {/* ==================================================================== */}
       {/* RENKLİ TEK SAYFA DİKEY A4 (210mm x 297mm) PDF ÖNİZLEME & YAZDIRMA    */}
@@ -4605,7 +4793,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pdfQuote.items.map((it, idx) => {
+                        {(Array.isArray(pdfQuote?.items) ? pdfQuote.items : []).map((it, idx) => {
                           const rowM2 = (it.widthCm * it.heightCm * it.quantity) / 10000;
                           const rowTotal = Math.round(rowM2 * it.unitPrice);
                           return (
@@ -4697,7 +4885,7 @@ export default function App() {
                   </div>
 
                   {/* 4. PROFESYONEL ISO 128 & TS EN 12519 VEKTÖREL CAD TEKNİK ÇİZİMİ */}
-                  <ISOTechnicalCADDrawing items={pdfQuote.items} />
+                  <ISOTechnicalCADDrawing items={Array.isArray(pdfQuote?.items) ? pdfQuote.items : []} />
                 </div>
 
                 {/* ALT SABİT BLOK: TEKLİF ŞARTLARI & WHATSAPP DİJİTAL ONAY ŞERİDİ */}
@@ -4778,7 +4966,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <ISOTechnicalCADDrawing items={pdfQuote.items} largeMode />
+                    <ISOTechnicalCADDrawing items={Array.isArray(pdfQuote?.items) ? pdfQuote.items : []} largeMode />
                   </div>
 
                   <div className="relative z-10 border-2 border-slate-900 grid grid-cols-4 text-[10px]">
