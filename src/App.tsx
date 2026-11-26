@@ -2032,7 +2032,7 @@ export default function App() {
       setFinanceEntries(readStoredArray(prefix + "finance", [], normalizeFinanceEntry));
       setDeletedFinanceIds(readStoredArray(prefix + "deleted-finance", [], (value) => String(value)));
       setFinanceCloudEnabled(false);
-      setLoginError(""); setShowLoginModal(false); setViewMode("member"); return;
+      setLoginError(""); setShowLoginModal(false); setMemberTab("home"); setViewMode("member"); return;
     }
     setLoginError("Kullanıcı adı veya şifre hatalı.");
   };
@@ -2963,6 +2963,14 @@ export default function App() {
                 <nav className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
+                    onClick={() => setMemberTab("home")}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${memberTab === "home" ? "bg-sky-500 text-slate-950 shadow-md" : "text-slate-300 hover:bg-slate-800/70"}`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Modüller
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => resetForNewQuote()}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition"
                   >
@@ -3100,6 +3108,50 @@ export default function App() {
                 </div>
               </div>
             </header>
+
+            {memberTab === "home" && (
+              <section className="max-w-[1440px] mx-auto px-3 sm:px-6 py-7 space-y-5">
+                <div className="bg-slate-900/90 border border-sky-500/25 rounded-2xl p-5 sm:p-7 shadow-xl">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-sky-400">ÜYE ÇALIŞMA ALANI</div>
+                      <h1 className="mt-1 text-2xl sm:text-3xl font-black text-white">Çalışma Alanı Modülleri</h1>
+                      <p className="mt-2 max-w-2xl text-sm text-slate-400">Tekliften tahsilata kadar tüm firma işlemlerinize tek ekrandan geçin. Kutucuklar mevcut canlı müşteri, teklif ve muhasebe verileriyle bağlıdır.</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-right text-xs text-slate-400">
+                      <div className="font-bold text-white">{firmSettings.companyName}</div>
+                      <div>{quotes.length} teklif • {customers.length} müşteri</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {[
+                    { tab: "studio", title: "Yeni Teklif Oluştur", description: "Ölçü, maliyet, CAD ve tek sayfa A4 PDF teklifinizi hazırlayın.", icon: Plus, tone: "amber", action: () => resetForNewQuote() },
+                    { tab: "accounting", title: "Genel Muhasebe", description: "Kasa, tahsilat, gider/ödeme ve müşteri alacaklarını yönetin.", icon: WalletCards, tone: "emerald", action: () => setMemberTab("accounting") },
+                    { tab: "archive", title: "Müşteri Arşivi", description: "Müşteri rehberine ulaşın, arayın ve müşteri bazlı mali işlemleri açın.", icon: Users, tone: "sky", action: () => setMemberTab("archive") },
+                    { tab: "settings", title: "Ayarlar", description: "Firma bilgileri, tarifeler, numaralandırma ve eşitleme ayarları.", icon: Settings, tone: "violet", action: () => setMemberTab("settings") },
+                    { tab: "pending", title: "Provizyonda Bekleyenler", description: `${pendingQuotes.length} bekleyen teklif; düzenleyin, onaylayın veya çöp kutusuna taşıyın.`, icon: Clock, tone: "amber", action: () => setMemberTab("pending") },
+                    { tab: "approved", title: "Onaylananlar", description: `${approvedQuotes.length} aktif iş; üretim, montaj, tahsilat ve kesim listesini takip edin.`, icon: CheckCircle2, tone: "emerald", action: () => setMemberTab("approved") },
+                  ].map(({ title, description, icon: Icon, tone, action }) => {
+                    const toneClasses = {
+                      amber: "border-amber-500/30 hover:border-amber-400/70 hover:bg-amber-500/10 text-amber-300 bg-amber-500/10",
+                      emerald: "border-emerald-500/30 hover:border-emerald-400/70 hover:bg-emerald-500/10 text-emerald-300 bg-emerald-500/10",
+                      sky: "border-sky-500/30 hover:border-sky-400/70 hover:bg-sky-500/10 text-sky-300 bg-sky-500/10",
+                      violet: "border-violet-500/30 hover:border-violet-400/70 hover:bg-violet-500/10 text-violet-300 bg-violet-500/10",
+                    }[tone];
+                    return (
+                      <button key={title} type="button" onClick={action} className={`group min-h-[170px] text-left rounded-2xl border bg-slate-900/90 p-5 shadow-lg transition duration-200 hover:-translate-y-0.5 ${toneClasses}`}>
+                        <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950/80 border border-current/20"><Icon className="w-5 h-5" /></span>
+                        <span className="mt-5 block text-lg font-extrabold text-white group-hover:text-current">{title}</span>
+                        <span className="mt-2 block text-xs leading-relaxed text-slate-400">{description}</span>
+                        <span className="mt-4 block text-[11px] font-bold uppercase tracking-wider text-slate-500 group-hover:text-current">Modülü aç →</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
             {/* SEKME 1: TEKLİF & ISO CAD STÜDYOSU */}
             {memberTab === "studio" && (
@@ -4508,7 +4560,7 @@ export default function App() {
                         Yetkili: {firm.ownerName} • Tel: {firm.phone} • Şehir: {firm.city}
                       </div>
                     </div>
-                    <div className="flex gap-2"><button type="button" onClick={() => { navigator.clipboard?.writeText(`Kullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`); showToast("Giriş bilgileri kopyalandı."); }} className="px-3 py-2 rounded-xl bg-slate-800 text-xs font-bold text-sky-300">Bilgileri Kopyala</button><a href={`https://wa.me/?text=${encodeURIComponent(`MARH-LAB giriş bilgileriniz\nKullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`)}`} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-emerald-700 text-xs font-bold text-white">WhatsApp</a><button type="button" onClick={() => { setLoginUser(firm.username); setLoginPass(firm.password || ""); setActiveTenantUsername(firm.username); setViewMode("member"); }} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300">Firma Panelini Aç</button></div>
+                    <div className="flex gap-2"><button type="button" onClick={() => { navigator.clipboard?.writeText(`Kullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`); showToast("Giriş bilgileri kopyalandı."); }} className="px-3 py-2 rounded-xl bg-slate-800 text-xs font-bold text-sky-300">Bilgileri Kopyala</button><a href={`https://wa.me/?text=${encodeURIComponent(`MARH-LAB giriş bilgileriniz\nKullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`)}`} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-emerald-700 text-xs font-bold text-white">WhatsApp</a><button type="button" onClick={() => { setLoginUser(firm.username); setLoginPass(firm.password || ""); setActiveTenantUsername(firm.username); setMemberTab("home"); setViewMode("member"); }} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300">Firma Panelini Aç</button></div>
                   </div>
                 ))}
             </div>
