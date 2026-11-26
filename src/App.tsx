@@ -1909,6 +1909,8 @@ export default function App() {
     return { totalArea, subtotal, discountAmount, vatAmount, grandTotal: taxable + vatAmount };
   };
 
+  const quoteTotal = (q) => calcQuoteTotals(Array.isArray(q?.items) ? q.items : [], q?.discountPercent, q?.vatIncluded).grandTotal;
+
   const financialSummary = useMemo(() => {
     return calcQuoteTotals(effectiveItems, discountPercent, vatIncluded);
   }, [effectiveItems, discountPercent, vatIncluded, firmSettings.vatRate]);
@@ -2171,7 +2173,6 @@ export default function App() {
     showToast("WhatsApp teklif özeti panoya kopyalandı!");
   };
 
-  const quoteTotal = (q) => calcQuoteTotals(Array.isArray(q?.items) ? q.items : [], q?.discountPercent, q?.vatIncluded).grandTotal;
   const whatsappHref = (q) => `https://wa.me/${(q.customerPhone || "").replace(/\D/g, "").replace(/^0/, "90")}?text=${encodeURIComponent(`${firmSettings.companyName} ${q.orderCode} teklifiniz: ₺${quoteTotal(q).toLocaleString("tr-TR")}`)}`;
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify({ firmSettings, customers, quotes, trash }, null, 2)], { type: "application/json" });
