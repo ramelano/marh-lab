@@ -2393,6 +2393,8 @@ export default function App() {
   }, [pdfQuote, firmSettings.vatRate]);
 
   const activeShowcase = SHOWCASE_SYSTEMS[showcaseIndex] || SHOWCASE_SYSTEMS[0];
+  const isQuoteSection = ["studio", "pending", "approved"].includes(memberTab);
+  const formatMoney = (value) => `₺${Number(value || 0).toLocaleString("tr-TR")}`;
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 flex flex-col">
@@ -2960,117 +2962,48 @@ export default function App() {
                   </div>
                 </div>
 
-                <nav className="flex flex-wrap items-center gap-1.5">
+                <nav className="flex flex-1 flex-wrap items-center gap-1.5 min-w-0">
                   <button
                     type="button"
                     onClick={() => setMemberTab("home")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${memberTab === "home" ? "bg-sky-500 text-slate-950 shadow-md" : "text-slate-300 hover:bg-slate-800/70"}`}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-bold transition"
                   >
-                    <Layers className="w-3.5 h-3.5" />
-                    Modüller
+                    ← <span className="hidden sm:inline">Geri (Modüller)</span><span className="sm:hidden">Modüller</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => resetForNewQuote()}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-amber-400" />
-                    Yeni Teklif
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("studio")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "studio"
-                        ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
-                        : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <Compass className="w-3.5 h-3.5" />
-                    Teklif &amp; CAD Stüdyo
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("pending")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "pending"
-                        ? "bg-amber-500 text-slate-950 shadow-md"
-                        : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    Provizyonda Bekleyenler
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px]">
-                      {pendingQuotes.length}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("approved")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "approved"
-                        ? "bg-emerald-500 text-slate-950 shadow-md"
-                        : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <CheckCircle2
-                      className={`w-3.5 h-3.5 ${
-                        memberTab === "approved" ? "text-slate-950" : "text-emerald-400"
-                      }`}
-                    />
-                    Onaylananlar
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                        memberTab === "approved"
-                          ? "bg-slate-950/20 text-slate-950"
-                          : "bg-emerald-500/20 text-emerald-300"
-                      }`}
-                    >
-                      {approvedQuotes.length}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("archive")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "archive"
-                        ? "bg-amber-500 text-slate-950 shadow-md"
-                        : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    Müşteri Arşivi (A-Z)
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("settings")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "settings"
-                        ? "bg-amber-500 text-slate-950 shadow-md"
-                        : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    Ayarlar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMemberTab("accounting")}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                      memberTab === "accounting" ? "bg-emerald-500 text-slate-950 shadow-md" : "text-slate-300 hover:bg-slate-800/70"
-                    }`}
-                  >
-                    <WalletCards className="w-3.5 h-3.5" />
-                    Genel Muhasebe
-                  </button>
+                  {isQuoteSection ? (
+                    <>
+                      <button type="button" onClick={() => resetForNewQuote()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold transition">
+                        <Plus className="w-3.5 h-3.5" /> Yeni Teklif / CAD
+                      </button>
+                      <button type="button" onClick={() => setMemberTab("studio")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "studio" ? "bg-slate-800 text-amber-300" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <Compass className="w-3.5 h-3.5" /> Teklif &amp; CAD
+                      </button>
+                      <button type="button" onClick={() => setMemberTab("pending")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "pending" ? "bg-amber-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <Clock className="w-3.5 h-3.5" /> Bekleyenler <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-300">{pendingQuotes.length}</span>
+                      </button>
+                      <button type="button" onClick={() => setMemberTab("approved")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "approved" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Onaylananlar <span className="rounded-full bg-emerald-500/20 px-1.5 text-[10px] text-emerald-300">{approvedQuotes.length}</span>
+                      </button>
+                      <button type="button" onClick={openCurrentInPdf} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold transition">
+                        <FileText className="w-3.5 h-3.5" /> A4 Teklif PDF
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => setMemberTab("archive")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "archive" ? "bg-sky-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <Users className="w-3.5 h-3.5" /> Müşteri Arşivi
+                      </button>
+                      <button type="button" onClick={() => setMemberTab("accounting")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "accounting" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <WalletCards className="w-3.5 h-3.5" /> Genel Muhasebe
+                      </button>
+                      <button type="button" onClick={() => setMemberTab("settings")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "settings" ? "bg-violet-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                        <Settings className="w-3.5 h-3.5" /> Ayarlar
+                      </button>
+                    </>
+                  )}
                 </nav>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={syncLocalDataToCloud}
@@ -3088,14 +3021,6 @@ export default function App() {
                     <span className="border-l border-current/30 pl-1.5 text-[10px] opacity-80">
                       {syncState === "syncing" ? "Eşitleniyor" : syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Kuyrukta" : syncState === "error" ? "Hata" : "Yerel mod"}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openCurrentInPdf}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold transition"
-                  >
-                    <FileText className="w-3.5 h-3.5" />
-                    A4 Teklif PDF
                   </button>
                   <button
                     type="button"
@@ -3127,13 +3052,13 @@ export default function App() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {[
-                    { tab: "studio", title: "Yeni Teklif Oluştur", description: "Ölçü, maliyet, CAD ve tek sayfa A4 PDF teklifinizi hazırlayın.", icon: Plus, tone: "amber", action: () => resetForNewQuote() },
-                    { tab: "accounting", title: "Genel Muhasebe", description: "Kasa, tahsilat, gider/ödeme ve müşteri alacaklarını yönetin.", icon: WalletCards, tone: "emerald", action: () => setMemberTab("accounting") },
-                    { tab: "archive", title: "Müşteri Arşivi", description: "Müşteri rehberine ulaşın, arayın ve müşteri bazlı mali işlemleri açın.", icon: Users, tone: "sky", action: () => setMemberTab("archive") },
-                    { tab: "settings", title: "Ayarlar", description: "Firma bilgileri, tarifeler, numaralandırma ve eşitleme ayarları.", icon: Settings, tone: "violet", action: () => setMemberTab("settings") },
-                    { tab: "pending", title: "Provizyonda Bekleyenler", description: `${pendingQuotes.length} bekleyen teklif; düzenleyin, onaylayın veya çöp kutusuna taşıyın.`, icon: Clock, tone: "amber", action: () => setMemberTab("pending") },
-                    { tab: "approved", title: "Onaylananlar", description: `${approvedQuotes.length} aktif iş; üretim, montaj, tahsilat ve kesim listesini takip edin.`, icon: CheckCircle2, tone: "emerald", action: () => setMemberTab("approved") },
-                  ].map(({ title, description, icon: Icon, tone, action }) => {
+                    { tab: "studio", title: "Yeni Teklif Oluştur", description: "Ölçü, maliyet, CAD ve tek sayfa A4 PDF teklifinizi hazırlayın.", summary: `${pendingQuotes.length} bekleyen • ${approvedQuotes.length} onaylı teklif`, icon: Plus, tone: "amber", action: () => resetForNewQuote() },
+                    { tab: "accounting", title: "Genel Muhasebe", description: "Kasa, tahsilat, gider/ödeme ve müşteri alacaklarını yönetin.", summary: `Kasa ${formatMoney(netCash)} • Alacak ${formatMoney(overallReceivables)}`, icon: WalletCards, tone: "emerald", action: () => setMemberTab("accounting") },
+                    { tab: "archive", title: "Müşteri Arşivi", description: "Müşteri rehberine ulaşın, arayın ve müşteri bazlı mali işlemleri açın.", summary: `${customers.length} müşteri • ${allFinanceEntries.length} mali hareket`, icon: Users, tone: "sky", action: () => setMemberTab("archive") },
+                    { tab: "settings", title: "Ayarlar", description: "Firma bilgileri, tarifeler, numaralandırma ve eşitleme ayarları.", summary: syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Senkron kuyruğunda" : syncState === "error" ? "Senkron hatası" : "Yerel çalışma modu", icon: Settings, tone: "violet", action: () => setMemberTab("settings") },
+                    { tab: "pending", title: "Provizyonda Bekleyenler", description: `${pendingQuotes.length} bekleyen teklif; düzenleyin, onaylayın veya çöp kutusuna taşıyın.`, summary: `${pendingQuotes.length} kayıt bekliyor`, icon: Clock, tone: "amber", action: () => setMemberTab("pending") },
+                    { tab: "approved", title: "Onaylananlar", description: `${approvedQuotes.length} aktif iş; üretim, montaj, tahsilat ve kesim listesini takip edin.`, summary: `${approvedQuotes.length} aktif iş • Alacak ${formatMoney(overallReceivables)}`, icon: CheckCircle2, tone: "emerald", action: () => setMemberTab("approved") },
+                  ].map(({ title, description, summary, icon: Icon, tone, action }) => {
                     const toneClasses = {
                       amber: "border-amber-500/30 hover:border-amber-400/70 hover:bg-amber-500/10 text-amber-300 bg-amber-500/10",
                       emerald: "border-emerald-500/30 hover:border-emerald-400/70 hover:bg-emerald-500/10 text-emerald-300 bg-emerald-500/10",
@@ -3145,7 +3070,8 @@ export default function App() {
                         <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950/80 border border-current/20"><Icon className="w-5 h-5" /></span>
                         <span className="mt-5 block text-lg font-extrabold text-white group-hover:text-current">{title}</span>
                         <span className="mt-2 block text-xs leading-relaxed text-slate-400">{description}</span>
-                        <span className="mt-4 block text-[11px] font-bold uppercase tracking-wider text-slate-500 group-hover:text-current">Modülü aç →</span>
+                        <span className="mt-3 block text-xs font-extrabold text-white">{summary}</span>
+                        <span className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-slate-500 group-hover:text-current">Modülü aç →</span>
                       </button>
                     );
                   })}
