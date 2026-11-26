@@ -78,6 +78,8 @@ const DEFAULT_FIRM_SETTINGS = {
   dailyAllowance: 1500,
   password: "Kd!2026#92",
   showClassicSignatures: false,
+  onboardingCompleted: false,
+  cityDistrict: "",
   termsTemplate: `krom kaplama çelik zincir tahrik sistemi
 mosel marka tüp motor ve uzaktan kumanda
 silinebilir özellikli hareketli kanatlar
@@ -377,12 +379,18 @@ const INITIAL_QUOTES = [
 // ============================================================================
 
 function readableError(error: unknown, fallback = "Beklenmeyen hata") {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    try { return JSON.stringify(error); } catch { return fallback; }
+  const value = error as any;
+  const code = String(value?.code || value?.status || "");
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : String(value?.message || "");
+  const text = raw || (value && typeof value === "object" ? (() => { try { return JSON.stringify(value); } catch { return ""; } })() : "");
+  const lower = text.toLocaleLowerCase("tr");
+  if (code === "42501" || lower.includes("42501") || lower.includes("permission denied") || lower.includes("row-level security")) {
+    return "Bulut erişim izni reddedildi (42501). Uygulama güvenli yerel modda devam ediyor; Supabase tabloları için uygun GRANT/RLS politikalarını kontrol edin.";
   }
-  return fallback;
+  if (code === "42P01" || code === "PGRST205" || lower.includes("relation") && lower.includes("does not exist") || lower.includes("table") && lower.includes("not found")) {
+    return "Supabase tablosu bulunamadı veya erişilemiyor. Uygulama yerel modda devam ediyor; gerekli tablo/migration ve yetkileri kontrol edin.";
+  }
+  return text && text !== "[object Object]" ? text : fallback;
 }
 
 function NumericInput({ value, onChange, fallback = 0, ...props }) {
@@ -1478,6 +1486,9 @@ function normalizeSettings(value: any, base = DEFAULT_FIRM_SETTINGS) {
       reportAppDataIssue("Firma ayarları", new Error(`${key} alanı sonlu bir sayı değil; varsayılan değer kullanıldı.`));
     }
   }
+  if (typeof source.onboardingCompleted === "boolean") normalized.onboardingCompleted = source.onboardingCompleted;
+  else if (source.onboardingCompleted !== undefined) normalized.onboardingCompleted = Boolean(source.onboardingCompleted);
+  if (typeof source.cityDistrict === "string") normalized.cityDistrict = source.cityDistrict;
   if (typeof source.showClassicSignatures === "boolean") normalized.showClassicSignatures = source.showClassicSignatures;
   else if (source.showClassicSignatures !== undefined) {
     normalized.showClassicSignatures = base.showClassicSignatures;
@@ -1574,6 +1585,7 @@ export default function App() {
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
+  useEffect(() => { try { const saved = JSON.parse(localStorage.getItem("marhlab.remember.login") || "null"); if (saved?.username) setLoginUser(String(saved.username)); if (saved?.password) setLoginPass(String(saved.password)); } catch {} }, []);
 
   const [showcaseIndex, setShowcaseIndex] = useState(0);
   const [showcasePlaying, setShowcasePlaying] = useState(true);
@@ -1649,6 +1661,10 @@ export default function App() {
   };
 
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [rememberLogin, setRememberLogin] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingForm, setOnboardingForm] = useState({ companyName: "", logoUrl: "", ownerName: "", phone: "", email: "", cityDistrict: "", address: "" });
 
   // TEKLİF STÜDYOSU DURUMLARI
   const [editingQuoteId, setEditingQuoteId] = useState(null);
@@ -1728,6 +1744,7 @@ export default function App() {
   const [trash, setTrash] = useState(() => readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`, [], normalizeTrashEntry));
   const [cuttingQuote, setCuttingQuote] = useState(null);
   const [tenantCloudReady, setTenantCloudReady] = useState(false);
+  const draftBaselineRef = useRef(null);
   const [adminCloudReady, setAdminCloudReady] = useState(false);
 
   useEffect(() => { writeStoredValue(`marhlab.tenant.${firmSettings.username}.trash`, trash); }, [trash, firmSettings.username]);
@@ -1758,7 +1775,7 @@ export default function App() {
         setAdminCloudReady(true);
         publishSyncStatus("synced", "Firma kayıtları buluttan güncellendi.");
       } catch (error) {
-        if (!cancelled) { reportAppDataIssue("Bulut firma kayıtları", error); setAdminCloudReady(true); publishSyncStatus("error", error instanceof Error ? error.message : "Firma kayıtları buluttan alınamadı."); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma kayıtları", error); setAdminCloudReady(true); publishSyncStatus("error", readableError(error, "Firma kayıtları buluttan alınamadı; yerel kayıtlar kullanılmaya devam ediyor.")); }
       }
     })();
     return () => { cancelled = true; };
@@ -1829,7 +1846,7 @@ export default function App() {
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
       } catch (error) {
-        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(false); publishSyncStatus("error", readableError(error, "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor.")); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(true); publishSyncStatus("error", readableError(error, "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor.")); }
       }
     })();
     return () => { cancelled = true; };
@@ -1921,6 +1938,18 @@ export default function App() {
     return [normalizeQuoteItem(currentDraftItem)];
   }, [basketItems, currentDraftItem]);
 
+  const draftSignature = JSON.stringify({ orderCode, projectTitle, customerName, customerPhone, customerAddress, selectedCategory, facadeName, selectedSeriesId, widthCm, heightCm, panels, openingDirection, angleDeg, quantity, glassType, glassColor, aluminumColor, motorized, customUnitPrice, basketItems, discountPercent, vatIncluded, showValidity, validityDays, quoteTerms });
+  if (draftBaselineRef.current === null) draftBaselineRef.current = draftSignature;
+  const draftIsDirty = memberTab === "studio" && draftBaselineRef.current !== draftSignature;
+  const requestMemberNavigation = (nextTab) => {
+    if (nextTab === memberTab) return;
+    if (draftIsDirty) {
+      setConfirmDialog({ title: "Teklif formundan çıkılsın mı?", message: "Girilen teklif/CAD verileri kaybolabilir. Devam etmek istiyor musunuz?", confirmLabel: "Evet, devam et", onConfirm: () => { draftBaselineRef.current = null; setMemberTab(nextTab); } });
+      return;
+    }
+    draftBaselineRef.current = null;
+    setMemberTab(nextTab);
+  };
   const calcQuoteTotals = (items, discount = 0, vat = false) => {
     const totalArea = items.reduce((a, it) => a + (Number(it.widthCm) * Number(it.heightCm) * Number(it.quantity || 1)) / 10000, 0);
     const subtotal = items.reduce((a, it) => a + Math.round(((Number(it.widthCm) * Number(it.heightCm) * Number(it.quantity || 1)) / 10000) * Number(it.unitPrice || 0)), 0);
@@ -2032,7 +2061,11 @@ export default function App() {
       setFinanceEntries(readStoredArray(prefix + "finance", [], normalizeFinanceEntry));
       setDeletedFinanceIds(readStoredArray(prefix + "deleted-finance", [], (value) => String(value)));
       setFinanceCloudEnabled(false);
-      setLoginError(""); setShowLoginModal(false); setMemberTab("home"); setViewMode("member"); return;
+      setLoginError(""); setShowLoginModal(false); setMemberTab("home"); setViewMode("member");
+      const onboarding = normalizeSettings({ ...DEFAULT_FIRM_SETTINGS, username: normalized, companyName: firm.companyName, ownerName: firm.ownerName || "", phone: firm.phone || "", address: firm.address || "", password: p, ...storedSettings });
+      setOnboardingForm({ companyName: onboarding.companyName || "", logoUrl: onboarding.logoUrl || "", ownerName: onboarding.ownerName || "", phone: onboarding.phone || "", email: onboarding.email || "", cityDistrict: onboarding.cityDistrict || firm.city || "", address: onboarding.address || "" });
+      if (!onboarding.onboardingCompleted) setOnboardingOpen(true);
+      return;
     }
     setLoginError("Kullanıcı adı veya şifre hatalı.");
   };
@@ -2163,6 +2196,7 @@ export default function App() {
       setOrderCode(nextAvailableOrderCode([...quotes, qObj], trash, Math.max(Number(firmSettings.nextOrderNumber || 1), savedNumber + 1)));
     }
 
+    draftBaselineRef.current = null;
     if (targetStatus === "pending") {
       showToast(`${qObj.orderCode} Provizyonda Bekleyenler listesine kaydedildi.`);
     } else {
@@ -2256,6 +2290,7 @@ export default function App() {
       setMotorized(Boolean(first.motorized));
       setCustomUnitPrice(first.unitPrice);
     }
+    draftBaselineRef.current = null;
     setMemberTab("studio");
     showToast(`${q.orderCode} düzenleme için stüdyoya yüklendi.`);
   };
@@ -2507,13 +2542,15 @@ export default function App() {
                 }}
                 className="px-3.5 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white"
               >
-                Evet, Sil
+                {confirmDialog.confirmLabel || "Evet, Sil"}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {logoutDialogOpen && <div className="no-print fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-300 flex items-center justify-center"><LogOut className="w-5 h-5" /></div><div><h3 className="text-sm font-bold text-white">Çıkış yapmak istiyor musunuz?</h3><p className="text-xs text-slate-400 mt-1">Oturumunuz güvenli şekilde kapatılacak.</p></div></div><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={rememberLogin} onChange={(e) => setRememberLogin(e.target.checked)} className="accent-amber-500" /> Giriş bilgilerim hatırlansın mı?</label><div className="flex justify-end gap-2"><button type="button" onClick={() => setLogoutDialogOpen(false)} className="px-3.5 py-2 rounded-lg bg-slate-800 text-xs text-slate-300">Vazgeç</button><button type="button" onClick={() => { if (rememberLogin) localStorage.setItem("marhlab.remember.login", JSON.stringify({ username: activeTenantUsername, password: firmSettings.password || loginPass })); else localStorage.removeItem("marhlab.remember.login"); setLogoutDialogOpen(false); setViewMode("landing"); setMemberTab("home"); }} className="px-3.5 py-2 rounded-lg bg-amber-500 text-xs font-bold text-slate-950">Çıkış Yap</button></div></div></div>}
+      {onboardingOpen && viewMode === "member" && <div className="no-print fixed inset-0 z-[75] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4"><div><div className="text-[11px] font-bold uppercase tracking-wider text-amber-400">İLK GİRİŞ KURULUMU</div><h2 className="text-xl font-black text-white">Kurum Profilini Tamamla</h2><p className="text-xs text-slate-400 mt-1">Bu bilgiler teklif ve A4 PDF antetinde kullanılacaktır.</p></div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{[["companyName","Kurum / Firma Adı"],["ownerName","Yetkili Adı"],["phone","Telefon"],["email","E-posta"],["cityDistrict","Şehir / İlçe"],["address","Açık Adres"]].map(([key,label]) => <div key={key}><label className="block text-[11px] text-slate-400 mb-1">{label}</label><input value={onboardingForm[key]} onChange={(e) => setOnboardingForm((v) => ({ ...v, [key]: e.target.value }))} className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" /></div>)}</div><div className="space-y-2"><label className="block text-[11px] text-slate-400">Firma Logosu (görsel yükleme, URL veya kısa monogram)</label><input value={onboardingForm.logoUrl} onChange={(e) => setOnboardingForm((v) => ({ ...v, logoUrl: e.target.value }))} placeholder="https://... veya ML" className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" /><label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-500 text-slate-950 text-xs font-bold cursor-pointer"><Upload className="w-3.5 h-3.5" /> Görsel yükle<input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={(e) => { const file=e.target.files?.[0]; if (!file) return; const reader=new FileReader(); reader.onload=()=>setOnboardingForm((v)=>({...v,logoUrl:String(reader.result||"")})); reader.readAsDataURL(file); }} /></label></div><div className="flex justify-end gap-2"><button type="button" onClick={() => { setFirmSettings((v) => ({ ...v, onboardingCompleted: true })); setOnboardingOpen(false); }} className="px-3.5 py-2 rounded-lg bg-slate-800 text-xs text-slate-300">Daha sonra</button><button type="button" onClick={() => { const completed = { ...onboardingForm, companyName: onboardingForm.companyName.trim() || firmSettings.companyName, address: onboardingForm.address.trim(), onboardingCompleted: true }; setFirmSettings((v) => normalizeSettings({ ...v, ...completed, watermarkText: completed.companyName })); setSiteCity(onboardingForm.cityDistrict || siteCity); setOnboardingOpen(false); showToast("Kurum profili kaydedildi; teklif ve PDF anteti güncellendi."); }} className="px-4 py-2 rounded-lg bg-amber-500 text-xs font-extrabold text-slate-950">Profili Kaydet</button></div></div></div>}
       {/* ==================================================================== */}
       {/* VIEW 1: MARH-LAB PAZARLAMA & SAAS VİTRİN ANA EKRANI                  */}
       {/* ==================================================================== */}
@@ -2963,25 +3000,25 @@ export default function App() {
                 </div>
 
                 <nav className="flex flex-1 flex-wrap items-center gap-1.5 min-w-0">
-                  <button
+                  {memberTab !== "home" && <button
                     type="button"
-                    onClick={() => setMemberTab("home")}
+                    onClick={() => requestMemberNavigation("home")}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-bold transition"
                   >
                     ← <span className="hidden sm:inline">Geri (Modüller)</span><span className="sm:hidden">Modüller</span>
-                  </button>
-                  {isQuoteSection ? (
+                  </button>}
+                  {memberTab !== "home" && isQuoteSection ? (
                     <>
-                      <button type="button" onClick={() => resetForNewQuote()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold transition">
+                      <button type="button" onClick={() => { if (draftIsDirty) { setConfirmDialog({ title: "Yeni teklif başlatılsın mı?", message: "Mevcut teklif/CAD formundaki veriler kaybolabilir.", confirmLabel: "Evet, yeni teklif", onConfirm: () => resetForNewQuote() }); } else resetForNewQuote(); }} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold transition">
                         <Plus className="w-3.5 h-3.5" /> Yeni Teklif / CAD
                       </button>
-                      <button type="button" onClick={() => setMemberTab("studio")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "studio" ? "bg-slate-800 text-amber-300" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("studio")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "studio" ? "bg-slate-800 text-amber-300" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <Compass className="w-3.5 h-3.5" /> Teklif &amp; CAD
                       </button>
-                      <button type="button" onClick={() => setMemberTab("pending")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "pending" ? "bg-amber-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("pending")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "pending" ? "bg-amber-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <Clock className="w-3.5 h-3.5" /> Bekleyenler <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-300">{pendingQuotes.length}</span>
                       </button>
-                      <button type="button" onClick={() => setMemberTab("approved")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "approved" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("approved")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "approved" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <CheckCircle2 className="w-3.5 h-3.5" /> Onaylananlar <span className="rounded-full bg-emerald-500/20 px-1.5 text-[10px] text-emerald-300">{approvedQuotes.length}</span>
                       </button>
                       <button type="button" onClick={openCurrentInPdf} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold transition">
@@ -2990,13 +3027,13 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <button type="button" onClick={() => setMemberTab("archive")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "archive" ? "bg-sky-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("archive")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "archive" ? "bg-sky-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <Users className="w-3.5 h-3.5" /> Müşteri Arşivi
                       </button>
-                      <button type="button" onClick={() => setMemberTab("accounting")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "accounting" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("accounting")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "accounting" ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <WalletCards className="w-3.5 h-3.5" /> Genel Muhasebe
                       </button>
-                      <button type="button" onClick={() => setMemberTab("settings")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "settings" ? "bg-violet-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
+                      <button type="button" onClick={() => requestMemberNavigation("settings")} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${memberTab === "settings" ? "bg-violet-500 text-slate-950" : "text-slate-300 hover:bg-slate-800/70"}`}>
                         <Settings className="w-3.5 h-3.5" /> Ayarlar
                       </button>
                     </>
@@ -3024,11 +3061,11 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setViewMode("landing")}
+                    onClick={() => { setRememberLogin(Boolean(localStorage.getItem("marhlab.remember.login"))); setLogoutDialogOpen(true); }}
                     title="Çıkış Yap"
-                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition"
                   >
-                    <LogOut className="w-4 h-4" />
+                    <LogOut className="w-4 h-4" /> Çıkış Yap
                   </button>
                 </div>
               </div>
@@ -3053,11 +3090,11 @@ export default function App() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {[
                     { tab: "studio", title: "Yeni Teklif Oluştur", description: "Ölçü, maliyet, CAD ve tek sayfa A4 PDF teklifinizi hazırlayın.", summary: `${pendingQuotes.length} bekleyen • ${approvedQuotes.length} onaylı teklif`, icon: Plus, tone: "amber", action: () => resetForNewQuote() },
-                    { tab: "accounting", title: "Genel Muhasebe", description: "Kasa, tahsilat, gider/ödeme ve müşteri alacaklarını yönetin.", summary: `Kasa ${formatMoney(netCash)} • Alacak ${formatMoney(overallReceivables)}`, icon: WalletCards, tone: "emerald", action: () => setMemberTab("accounting") },
-                    { tab: "archive", title: "Müşteri Arşivi", description: "Müşteri rehberine ulaşın, arayın ve müşteri bazlı mali işlemleri açın.", summary: `${customers.length} müşteri • ${allFinanceEntries.length} mali hareket`, icon: Users, tone: "sky", action: () => setMemberTab("archive") },
-                    { tab: "settings", title: "Ayarlar", description: "Firma bilgileri, tarifeler, numaralandırma ve eşitleme ayarları.", summary: syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Senkron kuyruğunda" : syncState === "error" ? "Senkron hatası" : "Yerel çalışma modu", icon: Settings, tone: "violet", action: () => setMemberTab("settings") },
-                    { tab: "pending", title: "Provizyonda Bekleyenler", description: `${pendingQuotes.length} bekleyen teklif; düzenleyin, onaylayın veya çöp kutusuna taşıyın.`, summary: `${pendingQuotes.length} kayıt bekliyor`, icon: Clock, tone: "amber", action: () => setMemberTab("pending") },
-                    { tab: "approved", title: "Onaylananlar", description: `${approvedQuotes.length} aktif iş; üretim, montaj, tahsilat ve kesim listesini takip edin.`, summary: `${approvedQuotes.length} aktif iş • Alacak ${formatMoney(overallReceivables)}`, icon: CheckCircle2, tone: "emerald", action: () => setMemberTab("approved") },
+                    { tab: "accounting", title: "Genel Muhasebe", description: "Kasa, tahsilat, gider/ödeme ve müşteri alacaklarını yönetin.", summary: `Kasa ${formatMoney(netCash)} • Alacak ${formatMoney(overallReceivables)}`, icon: WalletCards, tone: "emerald", action: () => requestMemberNavigation("accounting") },
+                    { tab: "archive", title: "Müşteri Arşivi", description: "Müşteri rehberine ulaşın, arayın ve müşteri bazlı mali işlemleri açın.", summary: `${customers.length} müşteri • ${allFinanceEntries.length} mali hareket`, icon: Users, tone: "sky", action: () => requestMemberNavigation("archive") },
+                    { tab: "settings", title: "Ayarlar", description: "Firma bilgileri, tarifeler, numaralandırma ve eşitleme ayarları.", summary: syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Senkron kuyruğunda" : syncState === "error" ? "Senkron hatası" : "Yerel çalışma modu", icon: Settings, tone: "violet", action: () => requestMemberNavigation("settings") },
+                    { tab: "pending", title: "Provizyonda Bekleyenler", description: `${pendingQuotes.length} bekleyen teklif; düzenleyin, onaylayın veya çöp kutusuna taşıyın.`, summary: `${pendingQuotes.length} kayıt bekliyor`, icon: Clock, tone: "amber", action: () => requestMemberNavigation("pending") },
+                    { tab: "approved", title: "Onaylananlar", description: `${approvedQuotes.length} aktif iş; üretim, montaj, tahsilat ve kesim listesini takip edin.`, summary: `${approvedQuotes.length} aktif iş • Alacak ${formatMoney(overallReceivables)}`, icon: CheckCircle2, tone: "emerald", action: () => requestMemberNavigation("approved") },
                   ].map(({ title, description, summary, icon: Icon, tone, action }) => {
                     const toneClasses = {
                       amber: "border-amber-500/30 hover:border-amber-400/70 hover:bg-amber-500/10 text-amber-300 bg-amber-500/10",
@@ -4114,6 +4151,8 @@ export default function App() {
                       Sistem, Birim Fiyat ve Kurumsal Marka Ayarları
                     </h2>
                   </div>
+                  <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setOnboardingForm({ companyName: firmSettings.companyName || "", logoUrl: firmSettings.logoUrl || "", ownerName: firmSettings.ownerName || "", phone: firmSettings.phone || "", email: firmSettings.email || "", cityDistrict: firmSettings.cityDistrict || siteCity || "", address: firmSettings.address || "" }); setOnboardingOpen(true); }} className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/30 text-violet-200 text-xs font-extrabold">Kurum Profilini Düzenle</button>
                   <button
                     type="button"
                     onClick={() => showToast("✅ Firma ayarları, logo ve filigran kaydedildi!")}
@@ -4122,6 +4161,7 @@ export default function App() {
                     <Check className="w-4 h-4" />
                     Değişiklikleri Kaydet
                   </button>
+                  </div>
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">

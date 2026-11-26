@@ -29,9 +29,14 @@ function writeQueue(queue: QueueJob[]) {
   try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); } catch { /* kota doluysa uygulama yine yerel çalışır */ }
 }
 function readableCloudError(error: unknown, fallback: string) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") { try { return JSON.stringify(error); } catch { return fallback; } }
+  const value = error as any;
+  const code = String(value?.code || value?.status || "");
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : String(value?.message || "");
+  const lower = raw.toLocaleLowerCase("tr");
+  if (code === "42501" || lower.includes("42501") || lower.includes("permission denied") || lower.includes("row-level security")) return "Bulut erişim izni reddedildi (42501). Yerel modda devam ediliyor; Supabase GRANT/RLS politikalarını kontrol edin.";
+  if (code === "42P01" || code === "PGRST205" || lower.includes("does not exist") || lower.includes("table") && lower.includes("not found")) return "Supabase tablosu bulunamadı; yerel modda devam ediliyor. Gerekli migration ve tablo yetkilerini kontrol edin.";
+  if (raw && raw !== "[object Object]") return raw;
+  if (value && typeof value === "object") { try { const json = JSON.stringify(value); return json === "{}" ? fallback : json; } catch { return fallback; } }
   return fallback;
 }
 function enqueue(job: QueueJob) {
