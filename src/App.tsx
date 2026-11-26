@@ -1371,8 +1371,8 @@ function optimizeProfileCuts(lengths, stockLength = 6000, kerf = 3) {
 export default function App() {
   const [viewMode, setViewMode] = useState("landing");
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginUser, setLoginUser] = useState("kondes_metal");
-  const [loginPass, setLoginPass] = useState("Kd!2026#92");
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
 
   const [showcaseIndex, setShowcaseIndex] = useState(0);
