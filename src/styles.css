@@ -1578,3 +1578,48 @@ body {
   @page { size: A4 portrait; margin: 0; }
   html, body { background: #fff !important; }
 }
+
+/* Açık/koyu tema yalnızca giriş yapılmış üye alanında uygulanır. */
+.member-theme-light {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.member-theme-light .bg-slate-950,
+.member-theme-light .bg-slate-950\/60,
+.member-theme-light .bg-slate-950\/80,
+.member-theme-light .bg-slate-900,
+.member-theme-light .bg-slate-900\/90,
+.member-theme-light .bg-slate-900\/80,
+.member-theme-light .bg-slate-800 {
+  background-color: #ffffff !important;
+}
+.member-theme-light .border-slate-900,
+.member-theme-light .border-slate-800,
+.member-theme-light .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+.member-theme-light .text-white,
+.member-theme-light .text-slate-100,
+.member-theme-light .text-slate-200,
+.member-theme-light .text-slate-300 {
+  color: #1e293b !important;
+}
+.member-theme-light .text-slate-400,
+.member-theme-light .text-slate-500 {
+  color: #64748b !important;
+}
+.member-theme-light input:not([type="checkbox"]):not([type="file"]),
+.member-theme-light textarea,
+.member-theme-light select {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+.member-theme-light option {
+  color: #0f172a;
+  background: #ffffff;
+}
+.member-theme-light header > div,
+.member-theme-light footer {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+}

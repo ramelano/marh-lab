@@ -78,6 +78,7 @@ const DEFAULT_FIRM_SETTINGS = {
   dailyAllowance: 1500,
   password: "Kd!2026#92",
   showClassicSignatures: false,
+  memberTheme: "dark",
   onboardingCompleted: false,
   cityDistrict: "",
   termsTemplate: `krom kaplama çelik zincir tahrik sistemi
@@ -1486,6 +1487,7 @@ function normalizeSettings(value: any, base = DEFAULT_FIRM_SETTINGS) {
       reportAppDataIssue("Firma ayarları", new Error(`${key} alanı sonlu bir sayı değil; varsayılan değer kullanıldı.`));
     }
   }
+  normalized.memberTheme = source.memberTheme === "light" ? "light" : "dark";
   if (typeof source.onboardingCompleted === "boolean") normalized.onboardingCompleted = source.onboardingCompleted;
   else if (source.onboardingCompleted !== undefined) normalized.onboardingCompleted = Boolean(source.onboardingCompleted);
   if (typeof source.cityDistrict === "string") normalized.cityDistrict = source.cityDistrict;
@@ -2218,7 +2220,7 @@ export default function App() {
       `Proje: ${qObj.projectTitle}`,
       ...(Array.isArray(qObj?.items) ? qObj.items : []).map(
         (it, idx) =>
-          `${idx + 1}. ${it.facadeName}: ${it.seriesName} (${it.widthCm}×${it.heightCm} cm, ${it.panels} Cam, ${it.quantity} Adet)`
+          `${idx + 1}. ${it.facadeName}: ${Number(it.widthCm) * 10}×${Number(it.heightCm) * 10} mm, ${it.panels} Cam, ${it.quantity} Adet)`
       ),
       `Toplam Alan: *${financialSummary.totalArea.toFixed(2)} m²*`,
       `Genel Toplam (${vatIncluded ? "KDV Dahil" : "KDV Hariç"}): *₺${financialSummary.grandTotal.toLocaleString("tr-TR")}*`,
@@ -2973,7 +2975,7 @@ export default function App() {
       {/* VIEW 2: ÜYE ÇALIŞMA ALANI (TEKLİF & 3D CAD STÜDYOSU)                 */}
       {/* ==================================================================== */}
       {viewMode === "member" && (
-        <div className="no-print flex-1 flex flex-col justify-between">
+        <div className={`no-print flex-1 flex flex-col justify-between member-theme-${firmSettings.memberTheme || "dark"}`}>
           <div>
             <header className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-4">
               <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
@@ -3332,20 +3334,20 @@ export default function App() {
 
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                       <div>
-                        <label className="block text-[11px] text-slate-400 mb-1">Genişlik (cm)</label>
+                        <label className="block text-[11px] text-slate-400 mb-1">Genişlik (mm)</label>
                         <NumericInput
-                          value={widthCm}
-                          onChange={setWidthCm}
+                          value={Number(widthCm) * 10}
+                          onChange={(value) => setWidthCm(value / 10)}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-white"
                         />
                       </div>
                       <div>
                         <label className="block text-[11px] text-slate-400 mb-1">
-                          Yükseklik (cm)
+                          Yükseklik (mm)
                         </label>
                         <NumericInput
-                          value={heightCm}
-                          onChange={setHeightCm}
+                          value={Number(heightCm) * 10}
+                          onChange={(value) => setHeightCm(value / 10)}
                           className="w-full rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-2 text-xs font-bold text-white"
                         />
                       </div>
@@ -3497,7 +3499,7 @@ export default function App() {
                                 {idx + 1}. {it.facadeName} — {it.seriesName}
                               </div>
                               <div className="text-[11px] text-slate-400">
-                                {it.widthCm}×{it.heightCm} cm ({it.panels} Cam) • {it.aluminumColor} •{" "}
+                                {Number(it.widthCm) * 10}×{Number(it.heightCm) * 10} mm ({it.panels} Cam) • {it.aluminumColor} •{" "}
                                 {rowM2.toFixed(2)} m²
                               </div>
                             </div>
@@ -3522,6 +3524,22 @@ export default function App() {
                     </div>
                   )}
 
+                  {(() => {
+                    const yol = Number(travelCost) || 0;
+                    const ekip = Number(teamSize) * Number(workDays) * Number(firmSettings.dailyAllowance || 0);
+                    const sahaToplam = yol + ekip;
+                    const malzeme = effectiveItems.reduce((sum, item) => { const series = SYSTEM_SERIES.find((candidate) => candidate.id === item.seriesId) || activeSeriesObj; const area = Number(item.widthCm || 0) * Number(item.heightCm || 0) * Number(item.quantity || 1) / 10000; return sum + Number(series.baseCostPerM2 || 0) * area; }, 0);
+                    const toplamIcMaliyet = malzeme + sahaToplam;
+                    const satisTutari = Number(financialSummary.grandTotal || 0);
+                    const netKar = satisTutari - toplamIcMaliyet;
+                    const tl = (value) => Number(value).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
+                    return <section className="bg-slate-900/80 border border-sky-500/20 rounded-2xl px-4 py-3 space-y-1.5" aria-label="Mali Özet">
+                      <h3 className="text-xs font-extrabold text-sky-300">Mali Özet</h3>
+                      <p className="text-[11px] text-slate-300">Saha gideri (Yol + Ekip): ₺{tl(yol)} + ₺{tl(ekip)} = ₺{tl(sahaToplam)}</p>
+                      <p className="text-[11px] text-slate-300">Toplam iç maliyet: ₺{tl(malzeme)} (malzeme) + ₺{tl(sahaToplam)} (saha) = ₺{tl(toplamIcMaliyet)}</p>
+                      <p className="text-[11px] text-slate-300">Kalan net kâr: ₺{tl(netKar)} (müşteriye çıkan tutar ₺{tl(satisTutari)})</p>
+                    </section>;
+                  })()}
                   {/* GEÇERLİLİK SÜRESİ & KDV */}
                   <div className="space-y-3 bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5">
                     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -4142,6 +4160,12 @@ export default function App() {
             {/* SEKME 5: AYARLAR */}
             {memberTab === "settings" && (
               <div className="max-w-5xl mx-auto px-3 sm:px-6 py-6 space-y-5">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+                  <div><h2 className="text-sm font-bold text-white">Üye Paneli Teması</h2><p className="text-xs text-slate-400 mt-1">Panel görünümünüz firma ayarlarıyla birlikte kaydedilir.</p></div>
+                  <div className="flex gap-2" role="group" aria-label="Üye paneli teması">
+                    {[{ id: "dark", label: "Koyu Mod" }, { id: "light", label: "Açık Mod" }].map((theme) => <button key={theme.id} type="button" aria-pressed={(firmSettings.memberTheme || "dark") === theme.id} onClick={() => setFirmSettings((prev) => ({ ...prev, memberTheme: theme.id }))} className={`rounded-xl px-4 py-2 text-xs font-bold border transition ${(firmSettings.memberTheme || "dark") === theme.id ? "bg-violet-500 text-slate-950 border-violet-400" : "bg-slate-950 text-slate-300 border-slate-700 hover:bg-slate-800"}`}>{theme.label}</button>)}
+                  </div>
+                </div>
                 <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
@@ -4610,7 +4634,7 @@ export default function App() {
         </div>
       )}
 
-      {cuttingQuote && <div className="no-print fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-white">Atölye Kesim Listesi — {cuttingQuote.orderCode}</h3><button onClick={() => setCuttingQuote(null)} className="text-slate-400"><X className="w-4 h-4" /></button></div><div className="overflow-auto"><table className="w-full text-xs"><thead><tr className="text-slate-400 border-b border-slate-700"><th className="text-left p-2">Cephe</th><th className="text-left p-2">Net Cam</th><th className="text-left p-2">Alüminyum Profil</th></tr></thead><tbody>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it => <tr key={it.id} className="border-b border-slate-800"><td className="p-2 text-white">{it.facadeName}</td><td className="p-2 text-sky-300">{Math.round(it.widthCm * 10 / Math.max(1,it.panels)) - 20} × {Number(it.heightCm)*10-40} mm × {it.panels} adet</td><td className="p-2 text-amber-300">Üst/alt: {Number(it.widthCm)*10} mm • Dikme: {Number(it.heightCm)*10} mm</td></tr>)}</tbody></table></div><div className="space-y-3"><h4 className="text-xs font-extrabold uppercase tracking-wide text-amber-400">6.000 mm Standart Boy Profil Optimizasyonu (3 mm testere payı dahil)</h4>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it=>{const w=Math.round(Number(it.widthCm)*10),h=Math.round(Number(it.heightCm)*10),n=Math.max(1,Number(it.panels)||1);const plans=[{name:"Kasa üst / alt",lengths:[w,w]},{name:"Kasa yan dikme",lengths:[h,h]},{name:"Kanat dikey kayıt",lengths:Array(n*2).fill(Math.max(0,h-80))},{name:"Baza",lengths:[w]}];return <div key={it.id+"-plan"} className="rounded-xl border border-slate-800 overflow-hidden"><div className="px-3 py-2 bg-slate-950 text-white text-xs font-bold">{it.facadeName} — mm cinsinden kesim yerleşimi</div><div className="overflow-x-auto"><table className="w-full text-[11px]"><thead className="text-slate-400"><tr><th className="text-left p-2">Profil grubu</th><th className="text-left p-2">Kesimler (mm)</th><th className="text-right p-2">6 m boy</th><th className="text-right p-2">Tahmini fire</th></tr></thead><tbody>{plans.map(pl=>{const r=optimizeProfileCuts(pl.lengths);return <tr key={pl.name} className="border-t border-slate-800"><td className="p-2 text-slate-200">{pl.name}</td><td className="p-2 text-sky-300">{pl.lengths.join(" + ")} mm</td><td className="p-2 text-right text-white">{r.bars.length} boy</td><td className="p-2 text-right text-amber-300">{r.wastePct.toFixed(1)}% ({Math.round(r.waste)} mm)</td></tr>})}</tbody></table></div></div>})}<p className="text-[10px] text-slate-500">Tahmini şematik optimizasyondur; profil sistemine göre kanal/bağlantı payları ve gerçek testere kerfi atölyede kontrol edilmelidir.</p></div><button onClick={() => window.print()} className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold">Yazdır</button></div></div>}
+      {cuttingQuote && <div className="no-print fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-white">Atölye Kesim Listesi — {cuttingQuote.orderCode}</h3><button onClick={() => setCuttingQuote(null)} className="text-slate-400"><X className="w-4 h-4" /></button></div><div className="overflow-auto"><table className="w-full text-xs"><thead><tr className="text-slate-400 border-b border-slate-700"><th className="text-left p-2">Cephe</th><th className="text-left p-2">Net Cam</th><th className="text-left p-2">Alüminyum Profil</th></tr></thead><tbody>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it => <tr key={it.id} className="border-b border-slate-800"><td className="p-2 text-white">{it.facadeName}</td><td className="p-2 text-sky-300">{Math.round(Number(it.widthCm) * 10 / Math.max(1,it.panels)) - 20} × {Number(it.heightCm) * 10 - 40} mm × {it.panels} adet</td><td className="p-2 text-amber-300">Üst/alt: {Number(it.widthCm)*10} mm • Dikme: {Number(it.heightCm)*10} mm</td></tr>)}</tbody></table></div><div className="space-y-3"><h4 className="text-xs font-extrabold uppercase tracking-wide text-amber-400">6.000 mm Standart Boy Profil Optimizasyonu (3 mm testere payı dahil)</h4>{(Array.isArray(cuttingQuote?.items) ? cuttingQuote.items : []).map(it=>{const w=Math.round(Number(it.widthCm)*10),h=Math.round(Number(it.heightCm)*10),n=Math.max(1,Number(it.panels)||1);const plans=[{name:"Kasa üst / alt",lengths:[w,w]},{name:"Kasa yan dikme",lengths:[h,h]},{name:"Kanat dikey kayıt",lengths:Array(n*2).fill(Math.max(0,h-80))},{name:"Baza",lengths:[w]}];return <div key={it.id+"-plan"} className="rounded-xl border border-slate-800 overflow-hidden"><div className="px-3 py-2 bg-slate-950 text-white text-xs font-bold">{it.facadeName} — mm cinsinden kesim yerleşimi</div><div className="overflow-x-auto"><table className="w-full text-[11px]"><thead className="text-slate-400"><tr><th className="text-left p-2">Profil grubu</th><th className="text-left p-2">Kesimler (mm)</th><th className="text-right p-2">6 m boy</th><th className="text-right p-2">Tahmini fire</th></tr></thead><tbody>{plans.map(pl=>{const r=optimizeProfileCuts(pl.lengths);return <tr key={pl.name} className="border-t border-slate-800"><td className="p-2 text-slate-200">{pl.name}</td><td className="p-2 text-sky-300">{pl.lengths.join(" + ")} mm</td><td className="p-2 text-right text-white">{r.bars.length} boy</td><td className="p-2 text-right text-amber-300">{r.wastePct.toFixed(1)}% ({Math.round(r.waste)} mm)</td></tr>})}</tbody></table></div></div>})}<p className="text-[10px] text-slate-500">Tahmini şematik optimizasyondur; profil sistemine göre kanal/bağlantı payları ve gerçek testere kerfi atölyede kontrol edilmelidir.</p></div><button onClick={() => window.print()} className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold">Yazdır</button></div></div>}
 
       {/* ==================================================================== */}
       {/* RENKLİ TEK SAYFA DİKEY A4 (210mm x 297mm) PDF ÖNİZLEME & YAZDIRMA    */}
@@ -4841,7 +4865,7 @@ export default function App() {
                                 </div>
                                 <div className="text-slate-700 text-[9.5px]">
                                   * {it.glassColor} {it.glassShortLabel || it.glassType} •{" "}
-                                  {it.widthCm}×{it.heightCm} cm ({it.panels} Cam)
+                                  {Number(it.widthCm) * 10}×{Number(it.heightCm) * 10} mm ({it.panels} Cam)
                                 </div>
                                 <div className="text-slate-700 text-[9.5px]">
                                   * {it.aluminumColor} •{" "}
