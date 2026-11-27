@@ -40,7 +40,10 @@ function readableCloudError(error: unknown, fallback: string) {
   return fallback;
 }
 function enqueue(job: QueueJob) {
-  const queue = readQueue();
+  let queue = readQueue();
+  if (job.operation === "delete" && job.filterId) {
+    queue = queue.filter((item) => !(item.table === job.table && item.operation !== "delete" && item.rows.some((row) => String(row.id || "") === String(job.filterId))));
+  }
   const key = job.operation === "delete" ? `${job.table}:delete:${job.filterId}` : `${job.table}:upsert:${job.conflict}:${job.rows.map((row) => String(row[job.conflict] || row.id || "")).join(",")}`;
   const index = queue.findIndex((item) => {
     const itemKey = item.operation === "delete" ? `${item.table}:delete:${item.filterId}` : `${item.table}:upsert:${item.conflict}:${item.rows.map((row) => String(row[item.conflict] || row.id || "")).join(",")}`;
@@ -92,10 +95,10 @@ export async function queueDelete(table: string, id: string) {
   }
 }
 
-export async function flushCloudQueue() {
-  if (!supabase || !navigator.onLine) return;
+export async function flushCloudQueue(): Promise<boolean> {
+  if (!supabase || !navigator.onLine) return false;
   const queue = readQueue();
-  if (!queue.length) return;
+  if (!queue.length) return true;
   publishSyncStatus("syncing");
   const remaining: QueueJob[] = [];
   for (const job of queue) {
@@ -103,6 +106,7 @@ export async function flushCloudQueue() {
   }
   writeQueue(remaining);
   publishSyncStatus(remaining.length ? "queued" : "synced", remaining.length ? `${remaining.length} işlem daha sonra yeniden denenecek.` : "Bekleyen değişiklikler buluta aktarıldı.");
+  return remaining.length === 0;
 }
 
 export function subscribeToCloudQueue() {

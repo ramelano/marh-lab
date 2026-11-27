@@ -1415,6 +1415,19 @@ function optimizeProfileCuts(lengths, stockLength = 6000, kerf = 3) {
 }
 
 const runtimeDataIssues: string[] = [];
+const MEMBER_STORAGE_SCHEMA = 2;
+
+function tenantStorageMetaKey(username: string) {
+  return `marhlab.tenant.${username}.storage-meta`;
+}
+
+function markTenantStorageSynchronized(username: string, details: Record<string, unknown> = {}) {
+  writeStoredValue(tenantStorageMetaKey(username), {
+    schema: MEMBER_STORAGE_SCHEMA,
+    updatedAt: new Date().toISOString(),
+    ...details,
+  });
+}
 
 function reportAppDataIssue(source: string, error: unknown) {
   const detail = {
@@ -1603,6 +1616,7 @@ export default function App() {
   const [cloudTenantId, setCloudTenantId] = useState("");
   const [syncState, setSyncState] = useState(isSupabaseConfigured ? "syncing" : "local");
   const [syncMessage, setSyncMessage] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState(() => runtimeDataIssues[0] || "");
 
   useEffect(() => {
@@ -1821,17 +1835,30 @@ export default function App() {
         const localCustomers = readStoredArray(prefix + "customers", [], normalizeCustomer);
         const localQuotes = readStoredArray(prefix + "quotes", [], normalizeQuote);
         const localTrash = readStoredArray(prefix + "trash", [], normalizeTrashEntry);
-        const deletedCustomerNames = new Set(localTrash.filter((entry) => entry.type === "customer").map((entry) => String(entry.data?.name || "").toLocaleLowerCase("tr")));
-        const customersByName = new Map(localCustomers.map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
+        const deletedCustomerNames = new Set([
+          ...localTrash.filter((entry) => entry.type === "customer").map((entry) => String(entry.data?.name || "").toLocaleLowerCase("tr")),
+          ...cloudCustomers.filter((row) => row && row.is_deleted).map((row) => String(row.name || "").toLocaleLowerCase("tr")),
+        ]);
+        const deletedQuoteCodes = new Set([
+          ...localTrash.filter((entry) => entry.type === "quote").map((entry) => String(entry.data?.orderCode || "").toLocaleLowerCase("tr")),
+          ...cloudQuotes.filter((row) => row && row.is_deleted).map((row) => String(row.order_code || "").toLocaleLowerCase("tr")),
+        ]);
+        const customersByName = new Map(localCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
         remoteCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
-        const quotesByCode = new Map(localQuotes.map((quote) => [quote.orderCode, quote]));
+        const quotesByCode = new Map(localQuotes.filter((quote) => !deletedQuoteCodes.has(String(quote.orderCode || "").toLocaleLowerCase("tr"))).map((quote) => [quote.orderCode, quote]));
         remoteQuotes.forEach((quote) => quotesByCode.set(quote.orderCode, quote));
         const trashByCode = new Map(localTrash.map((entry, index) => [`${entry.type || "quote"}:${entry.data?.orderCode || entry.data?.id || index}`, entry]));
         deletedQuotes.forEach((entry) => trashByCode.set(entry.data.orderCode, entry));
         setFirmSettings(normalizeSettings(settingsFromCloud(snapshot.settings, firmSettings), firmSettings));
-        setCustomers([...customersByName.values()]);
-        setQuotes([...quotesByCode.values()]);
-        setTrash([...trashByCode.values()]);
+        const reconciledCustomers = [...customersByName.values()];
+        const reconciledQuotes = [...quotesByCode.values()];
+        const reconciledTrash = [...trashByCode.values()];
+        setCustomers(reconciledCustomers);
+        setQuotes(reconciledQuotes);
+        setTrash(reconciledTrash);
+        writeStoredValue(prefix + "customers", reconciledCustomers);
+        writeStoredValue(prefix + "quotes", reconciledQuotes);
+        writeStoredValue(prefix + "trash", reconciledTrash);
         setFinanceCloudEnabled(snapshot.financeCloudEnabled);
         if (snapshot.financeCloudEnabled) {
           const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
@@ -1864,7 +1891,16 @@ export default function App() {
             if (!localEntry || cloudTime >= localTime) mergedFinance.set(entry.id, entry);
           });
           setDeletedFinanceIds([...deletedFinanceIdSet]);
-          setFinanceEntries([...mergedFinance.values()].filter((entry) => !deletedFinanceIdSet.has(entry.id)));
+          const reconciledFinance = [...mergedFinance.values()].filter((entry) => !deletedFinanceIdSet.has(entry.id));
+          setFinanceEntries(reconciledFinance);
+          writeStoredValue(prefix + "finance", reconciledFinance);
+          writeStoredValue(prefix + "deleted-finance", [...deletedFinanceIdSet]);
+          markTenantStorageSynchronized(username, {
+            customerIds: reconciledCustomers.map((item) => item.id),
+            quoteIds: reconciledQuotes.map((item) => item.id),
+            financeIds: reconciledFinance.map((item) => item.id),
+            deletedFinanceIds: [...deletedFinanceIdSet],
+          });
         }
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
@@ -2451,22 +2487,34 @@ export default function App() {
   };
 
   const syncLocalDataToCloud = async () => {
+    if (syncBusy) return;
     if (!supabase) {
       publishSyncStatus("local", "Supabase ortam değişkenleri tanımlı değil; veriler bu cihazda tutuluyor.");
       showToast("Supabase bağlantısı ayarlı değil. Veriler bu cihazda korunuyor; .env ayarlarını tamamlayın.");
       return;
     }
+    setSyncBusy(true);
     try {
+      setSyncState("syncing");
+      setSyncMessage("Yerel kayıtlar buluta aktarılıyor…");
       publishSyncStatus("syncing", "Yerel kayıtlar buluta aktarılıyor…");
       const tenant = cloudTenantId ? { id: cloudTenantId } : await fetchTenant(activeTenantUsername);
       if (!tenant?.id) throw new Error("Bu firma Supabase tenants tablosunda bulunamadı.");
       setCloudTenantId(tenant.id);
       await syncTenantSnapshot(tenant.id, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds);
-      await flushCloudQueue();
-      showToast("Yerel firma verileri bulut eşitleme kuyruğuna aktarıldı.");
+      const fullySynced = await flushCloudQueue();
+      if (!fullySynced) {
+        publishSyncStatus("queued", "Bazı değişiklikler bağlantı gelince yeniden gönderilecek.");
+        showToast("Senkronizasyon kuyruğa alındı; bağlantı sağlanınca tamamlanacak.");
+      } else {
+        publishSyncStatus("synced", "Firma verileri bulutla eşitlendi.");
+        showToast("Firma verileri bulutla eşitlendi.");
+      }
     } catch (error) {
       publishSyncStatus("error", readableError(error, "Bulut aktarımı tamamlanamadı."));
       showToast(`Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor. ${readableError(error, "Bağlantı veya yetki ayarlarını kontrol edin.")}`);
+    } finally {
+      setSyncBusy(false);
     }
   };
 
@@ -3102,9 +3150,9 @@ export default function App() {
                     }`}
                   >
                     <DatabaseBackup className="w-3.5 h-3.5" />
-                    <span>Yerel Verileri Buluta Eşitle</span>
+                    <span>Senkronize Et</span>
                     <span className="border-l border-current/30 pl-1.5 text-[10px] opacity-80">
-                      {syncState === "syncing" ? "Eşitleniyor" : syncState === "synced" ? "Bulut eşitlendi" : syncState === "queued" ? "Kuyrukta" : syncState === "error" ? "Hata" : "Yerel mod"}
+                      {syncBusy || syncState === "syncing" ? "Eşitleniyor…" : syncState === "synced" ? "Eşitlendi" : syncState === "queued" ? "Kuyrukta" : syncState === "error" ? "Hata" : "Yerel mod"}
                     </span>
                   </button>
                   <button
@@ -3116,6 +3164,10 @@ export default function App() {
                     <LogOut className="w-4 h-4" /> Çıkış Yap
                   </button>
                 </div>
+                <button type="button" className="member-mobile-sync-trigger" onClick={syncLocalDataToCloud} disabled={syncBusy} title={syncMessage || "Bulutla senkronize et"} aria-label={syncBusy ? "Senkronizasyon sürüyor" : "Senkronize Et"}>
+                  <DatabaseBackup className="w-4 h-4" />
+                  <span>{syncBusy || syncState === "syncing" ? "Eşitleniyor…" : syncState === "synced" ? "Eşitlendi" : "Senkronize Et"}</span>
+                </button>
                 <button type="button" className="member-mobile-menu-trigger" onClick={() => setMobileMemberMenuOpen(true)} aria-label="Modül menüsünü aç">
                   <Menu className="w-5 h-5" />
                 </button>
