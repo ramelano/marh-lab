@@ -27,3 +27,14 @@ create index if not exists financial_transactions_tenant_date_idx
   on public.financial_transactions (tenant_id, transaction_date desc);
 create index if not exists financial_transactions_tenant_customer_idx
   on public.financial_transactions (tenant_id, customer_id);
+
+-- Fiziksel DELETE RLS nedeniyle gecikse bile silinen hareketin başka cihazda
+-- yeniden görünmesini engelleyen kalıcı tombstone kaydı.
+create table if not exists public.financial_transaction_tombstones (
+  id uuid primary key,
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  deleted_at timestamptz not null default now()
+);
+
+create index if not exists financial_transaction_tombstones_tenant_idx
+  on public.financial_transaction_tombstones (tenant_id);

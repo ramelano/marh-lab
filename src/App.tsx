@@ -1863,7 +1863,8 @@ export default function App() {
         if (snapshot.financeCloudEnabled) {
           const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
           const storedDeletedFinanceIds = readStoredArray(prefix + "deleted-finance", [], (value) => String(value));
-          const deletedFinanceIdSet = new Set([...deletedFinanceIds, ...storedDeletedFinanceIds]);
+          const remoteDeletedFinanceIds = Array.isArray(snapshot.deletedFinanceIds) ? snapshot.deletedFinanceIds.map((value) => String(value)) : [];
+          const deletedFinanceIdSet = new Set([...deletedFinanceIds, ...storedDeletedFinanceIds, ...remoteDeletedFinanceIds]);
           const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
           const cloudFinanceEntries = (Array.isArray(snapshot.financeEntries) ? snapshot.financeEntries : []).flatMap((entry, index) => {
             if (!entry || typeof entry !== "object" || Array.isArray(entry)) {

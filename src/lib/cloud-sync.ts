@@ -309,7 +309,14 @@ export async function syncTenantSnapshot(tenantId: string, settings: any, custom
     if (existing?.id) await queueUpsert("quotes", [{ ...payload, id: existing.id }], "id");
     else await queueUpsert("quotes", [payload], "id");
   }
-  if (financeCloudEnabled) for (const id of deletedFinanceIds) await queueDelete("financial_transactions", id);
+  if (financeCloudEnabled && deletedFinanceIds.length) {
+    await queueUpsert("financial_transaction_tombstones", deletedFinanceIds.map((id) => ({
+      id,
+      tenant_id: tenantId,
+      deleted_at: new Date().toISOString(),
+    })), "id");
+    for (const id of deletedFinanceIds) await queueDelete("financial_transactions", id);
+  }
   if (financeCloudEnabled && financeEntries.length) {
     const { data: syncedCustomers } = await supabase.from("customers").select("id,name").eq("tenant_id", tenantId);
     const syncedCustomerIds = new Map((syncedCustomers || []).map((row: any) => [String(row.name).toLocaleLowerCase("tr"), row.id]));
@@ -349,14 +356,20 @@ export async function fetchTenantSnapshot(tenantId: string) {
   ]);
   const error = settingsResult.error || customersResult.error || quotesResult.error;
   if (error) throw error;
-  const financeResult = await supabase.from("financial_transactions").select("*").eq("tenant_id", tenantId).order("transaction_date", { ascending: false });
+  const [financeResult, tombstoneResult] = await Promise.all([
+    supabase.from("financial_transactions").select("*").eq("tenant_id", tenantId).order("transaction_date", { ascending: false }),
+    supabase.from("financial_transaction_tombstones").select("id").eq("tenant_id", tenantId),
+  ]);
   const missingFinanceTable = financeResult.error && ["PGRST205", "42P01"].includes(financeResult.error.code || "");
+  const missingTombstoneTable = tombstoneResult.error && ["PGRST205", "42P01"].includes(tombstoneResult.error.code || "");
   if (financeResult.error && !missingFinanceTable) throw financeResult.error;
+  if (tombstoneResult.error && !missingTombstoneTable) throw tombstoneResult.error;
   return {
     settings: settingsResult.data,
     customers: customersResult.data || [],
     quotes: quotesResult.data || [],
     financeEntries: financeResult.data || [],
     financeCloudEnabled: !missingFinanceTable,
+    deletedFinanceIds: (tombstoneResult.data || []).map((row: any) => String(row.id)),
   };
 }
