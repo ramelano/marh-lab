@@ -1572,7 +1572,7 @@ function normalizeAdminFirm(value: any) {
 function normalizeFinanceEntry(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Finans hareketi", new Error("Kayıt nesne biçiminde değil; güvenli finans alanları kullanıldı."));
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  return { ...source, id: String(source.id || `finance-${Date.now()}`), customerName: String(source.customerName || ""), kind: String(source.kind || "expense"), amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0, date: String(source.date || "") };
+  return { ...source, id: String(source.id || `finance-${Date.now()}`), customerName: String(source.customerName || ""), kind: String(source.kind || "expense"), amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0, date: String(source.date || ""), paymentMethod: String(source.paymentMethod || "Nakit"), dueDate: String(source.dueDate || ""), isClosed: Boolean(source.isClosed) };
 }
 
 function normalizeTrashEntry(value: any) {
@@ -1748,6 +1748,8 @@ export default function App() {
   const [ledgerDate, setLedgerDate] = useState(new Date().toISOString().slice(0, 10));
   const [ledgerDescription, setLedgerDescription] = useState("");
   const [ledgerCustomerName, setLedgerCustomerName] = useState("");
+  const [ledgerPaymentMethod, setLedgerPaymentMethod] = useState("Nakit");
+  const [ledgerDueDate, setLedgerDueDate] = useState("");
   const [trash, setTrash] = useState(() => readStoredArray(`marhlab.tenant.${DEFAULT_FIRM_SETTINGS.username}.trash`, [], normalizeTrashEntry));
   const [cuttingQuote, setCuttingQuote] = useState(null);
   const [tenantCloudReady, setTenantCloudReady] = useState(false);
@@ -2009,6 +2011,10 @@ export default function App() {
   const totalOutgoings = allFinanceEntries.filter((entry) => ["expense", "refund", "adjustment_out"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const overallReceivables = [...new Set<string>(approvedQuotes.map((quote) => String(quote.customerName)))].reduce<number>((sum, name) => sum + customerReceivable(name), 0);
   const netCash = totalReceived - totalOutgoings;
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const datedOpenEntries = allFinanceEntries.filter((entry) => entry.dueDate && !entry.isClosed).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const overdueEntries = datedOpenEntries.filter((entry) => entry.dueDate < todayDate);
+  const upcomingDueEntries = datedOpenEntries.filter((entry) => entry.dueDate >= todayDate);
   const filteredLedger = allFinanceEntries.filter((entry) =>
     (ledgerTypeFilter === "all" || entry.kind === ledgerTypeFilter) &&
     (ledgerCustomerFilter === "all" || entry.customerName === ledgerCustomerFilter) &&
@@ -2353,7 +2359,7 @@ export default function App() {
     setFinanceEntries((prev) => [{
       id: crypto.randomUUID(), customerId: entry.customer?.id || "", customerName: entry.customer?.name || entry.customerName || "",
       quoteCode: entry.quoteCode || "", kind: entry.kind, amount, date: entry.date || new Date().toISOString().slice(0, 10),
-      description: entry.description?.trim() || "Açıklama eklenmedi",
+      description: entry.description?.trim() || "Açıklama eklenmedi", paymentMethod: entry.paymentMethod || "Nakit", dueDate: entry.dueDate || "", isClosed: false,
     }, ...prev]);
     return true;
   };
@@ -2369,9 +2375,13 @@ export default function App() {
 
   const saveGeneralLedgerEntry = () => {
     const selectedCustomer = customers.find((customer) => customer.name === ledgerCustomerName) || null;
-    if (!addFinanceEntry({ kind: ledgerKind, amount: ledgerAmount, date: ledgerDate, description: ledgerDescription, customer: selectedCustomer })) return;
+    if (!addFinanceEntry({ kind: ledgerKind, amount: ledgerAmount, date: ledgerDate, dueDate: ledgerDueDate, paymentMethod: ledgerPaymentMethod, description: ledgerDescription, customer: selectedCustomer })) return;
     showToast("Muhasebe hareketi kaydedildi; kasa ve müşteri bakiyesi güncellendi.");
-    setLedgerAmount(""); setLedgerDescription("");
+    setLedgerAmount(""); setLedgerDescription(""); setLedgerDueDate(""); setLedgerPaymentMethod("Nakit");
+  };
+  const closeFinanceEntry = (entry) => {
+    setFinanceEntries((prev) => prev.map((item) => item.id === entry.id ? { ...item, isClosed: true } : item));
+    showToast("Vadeli hareket tahsil edildi / kapatıldı olarak işaretlendi.");
   };
 
   const deleteFinanceEntry = (entry) => {
@@ -4124,6 +4134,8 @@ export default function App() {
                     Bulut muhasebe tablosu henüz hazır değil; bu cihazdaki hareketler kaybolmadan yerel kaydediliyor. Çoklu cihaz eşitlemesi için ZIP içindeki <code>supabase/member-finance.sql</code> dosyasını Supabase SQL Editor&apos;da çalıştırın.
                   </div>
                 )}
+                {overdueEntries.length > 0 && <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"><div className="font-extrabold">Gecikmiş Ödeme</div><div className="mt-1 text-xs text-rose-200">{overdueEntries.length} açık vadeli kayıt • Toplam ₺{overdueEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0).toLocaleString("tr-TR")} • Tahsil/kapat işlemi bekliyor</div></div>}
+                {upcomingDueEntries.length > 0 && <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 px-4 py-3"><div className="text-xs font-bold text-sky-200">Yaklaşan Tarihler &amp; Vadeler</div><div className="mt-2 flex flex-wrap gap-2">{upcomingDueEntries.slice(0, 8).map((entry) => <div key={entry.id} className="rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-200"><span className="font-bold">{entry.dueDate}</span> · {entry.customerName || "Genel"} · {entry.paymentMethod || "Nakit"} · ₺{Number(entry.amount).toLocaleString("tr-TR")}</div>)}</div></div>}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                   {[
                     ["Kasa / Net Nakit Durumu", netCash, "income"],
@@ -4139,13 +4151,13 @@ export default function App() {
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
                   <h3 className="text-sm font-bold text-amber-400">Genel Gider / Tahsilat / Düzeltme Ekle</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
-                    <select value={ledgerKind} onChange={(e) => setLedgerKind(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white">
-                      <option value="expense">Gider / Ödeme (çıkan)</option><option value="income">Tahsilat (giren)</option><option value="refund">İade (çıkan)</option><option value="adjustment_in">Düzeltme (giren)</option><option value="adjustment_out">Düzeltme (çıkan)</option>
-                    </select>
-                    <input type="number" min="0.01" step="0.01" value={ledgerAmount} onChange={(e) => setLedgerAmount(e.target.value)} placeholder="Tutar ₺" className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
-                    <input type="date" value={ledgerDate} onChange={(e) => setLedgerDate(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
-                    <select value={ledgerCustomerName} onChange={(e) => setLedgerCustomerName(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white"><option value="">Müşteri ilişkilendirme (isteğe bağlı)</option>{sortedCustomers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}</select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    <div className="space-y-1"><select value={ledgerCustomerName} onChange={(e) => setLedgerCustomerName(e.target.value)} className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white"><option value="">Müşteri seçin (isteğe bağlı)</option>{sortedCustomers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}</select>{ledgerCustomerName && <div className="text-[10px] text-amber-200">Kalan alacak: ₺{customerReceivable(ledgerCustomerName).toLocaleString("tr-TR")}</div>}</div>
+                    <select value={ledgerKind === "income" ? "income" : "expense"} onChange={(e) => setLedgerKind(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white"><option value="income">Gelen (giren)</option><option value="expense">Giden (çıkan)</option></select>
+                    <input type="number" min="0.01" step="0.01" value={ledgerAmount} onChange={(e) => setLedgerAmount(e.target.value)} placeholder="Tutar (₺)" className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
+                    <select value={ledgerPaymentMethod} onChange={(e) => setLedgerPaymentMethod(e.target.value)} className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white"><option>Nakit</option><option>Havale/EFT</option><option>Kredi Kartı</option><option>Çek</option><option>Senet</option></select>
+                    <label className="space-y-1"><span className="block text-[10px] text-slate-400">İşlem Tarihi</span><input type="date" value={ledgerDate} onChange={(e) => setLedgerDate(e.target.value)} className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" /></label>
+                    <div className="space-y-1"><label className={`block text-[10px] ${["Çek", "Senet"].includes(ledgerPaymentMethod) ? "font-bold text-amber-300" : "text-slate-400"}`}>{["Çek", "Senet"].includes(ledgerPaymentMethod) ? "Son Ödeme / Vade Tarihi (önemli)" : "Son Ödeme / Vade Tarihi (isteğe bağlı)"}</label><input type="date" value={ledgerDueDate} onChange={(e) => setLedgerDueDate(e.target.value)} className={`w-full rounded-xl bg-slate-950 border px-3 py-2 text-xs text-white ${["Çek", "Senet"].includes(ledgerPaymentMethod) ? "border-amber-500/60" : "border-slate-700"}`} />{["Çek", "Senet"].includes(ledgerPaymentMethod) && <div className="flex gap-1">{[30, 60, 90].map((days) => <button key={days} type="button" onClick={() => { const date = new Date(`${ledgerDate}T12:00:00`); date.setDate(date.getDate() + days); setLedgerDueDate(date.toISOString().slice(0, 10)); }} className="rounded border border-amber-500/30 px-1.5 py-0.5 text-[9px] text-amber-200">+{days} gün</button>)}</div>}</div>
                     <input value={ledgerDescription} onChange={(e) => setLedgerDescription(e.target.value)} placeholder="Açıklama" className="rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-white" />
                     <button type="button" onClick={saveGeneralLedgerEntry} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-extrabold text-slate-950">Hareketi Kaydet</button>
                   </div>
@@ -4156,8 +4168,8 @@ export default function App() {
                     <select value={ledgerCustomerFilter} onChange={(e) => setLedgerCustomerFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="all">Tüm müşteriler</option>{[...new Set(allFinanceEntries.map((entry) => entry.customerName).filter(Boolean))].map((name) => <option key={name} value={name}>{name}</option>)}</select>
                     <input type="date" value={ledgerDateFilter} onChange={(e) => setLedgerDateFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
                   </div></div>
-                  <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-xs"><thead><tr className="border-b border-slate-700 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür</th><th className="p-2">Müşteri</th><th className="p-2">Teklif</th><th className="p-2">Açıklama</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
-                    {filteredLedger.map((entry) => <tr key={entry.id} className="border-b border-slate-800"><td className="p-2 text-slate-300">{entry.date || "—"}</td><td className="p-2 text-slate-200">{{ income: "Tahsilat", expense: "Gider / Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind}</td><td className="p-2 text-slate-300">{entry.customerName || "Genel"}</td><td className="p-2 text-slate-400">{entry.quoteCode || "—"}</td><td className="p-2 text-slate-400">{entry.description}</td><td className={`p-2 text-right font-bold ${signedFinanceAmount(entry) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{signedFinanceAmount(entry) >= 0 ? "+" : "−"}₺{Number(entry.amount).toLocaleString("tr-TR")}</td><td className="p-2 text-right"><button type="button" title="Hareketi sil" onClick={() => deleteFinanceEntry(entry)} className="rounded-lg p-1.5 text-rose-300 hover:bg-rose-500/10"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
+                  <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-xs"><thead><tr className="border-b border-slate-700 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür</th><th className="p-2">Müşteri</th><th className="p-2">Ödeme Yöntemi</th><th className="p-2">Vade</th><th className="p-2">Teklif</th><th className="p-2">Açıklama</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
+                    {filteredLedger.map((entry) => <tr key={entry.id} className="border-b border-slate-800"><td className="p-2 text-slate-300">{entry.date || "—"}</td><td className="p-2 text-slate-200">{{ income: "Tahsilat", expense: "Gider / Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind}</td><td className="p-2 text-slate-300">{entry.customerName || "Genel"}</td><td className="p-2 text-slate-400">{entry.paymentMethod || "Nakit"}</td><td className={`p-2 ${entry.dueDate && entry.dueDate < todayDate && !entry.isClosed ? "font-bold text-rose-300" : "text-slate-400"}`}>{entry.dueDate || "—"}{entry.isClosed && <span className="ml-1 text-emerald-300">• Kapalı</span>}</td><td className="p-2 text-slate-400">{entry.quoteCode || "—"}</td><td className="p-2 text-slate-400">{entry.description}</td><td className={`p-2 text-right font-bold ${signedFinanceAmount(entry) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{signedFinanceAmount(entry) >= 0 ? "+" : "−"}₺{Number(entry.amount).toLocaleString("tr-TR")}</td><td className="p-2 text-right whitespace-nowrap">{entry.dueDate && !entry.isClosed && <button type="button" title="Tahsil edildi / kapatıldı olarak işaretle" onClick={() => closeFinanceEntry(entry)} className="mr-1 rounded-lg px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10">Kapat</button>}<button type="button" title="Hareketi sil" onClick={() => deleteFinanceEntry(entry)} className="rounded-lg p-1.5 text-rose-300 hover:bg-rose-500/10"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
                     {!filteredLedger.length && <tr><td colSpan={7} className="p-6 text-center text-slate-500">Filtrelere uygun mali hareket bulunamadı.</td></tr>}
                   </tbody></table></div>
                 </div>
