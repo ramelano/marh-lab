@@ -5,6 +5,7 @@ import {
   fetchAdminTenants,
   fetchTenant,
   fetchTenantSnapshot,
+  flushCloudQueue,
   persistTenants,
   publishSyncStatus,
   quoteFromCloud,
@@ -1616,6 +1617,7 @@ export default function App() {
   const [syncState, setSyncState] = useState(isSupabaseConfigured ? "syncing" : "local");
   const [syncMessage, setSyncMessage] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
+  const [cloudRefreshToken, setCloudRefreshToken] = useState(0);
   const [runtimeNotice, setRuntimeNotice] = useState(() => runtimeDataIssues[0] || "");
 
   useEffect(() => {
@@ -1813,14 +1815,14 @@ export default function App() {
   }, [adminFirms, adminCloudReady, viewMode]);
 
   useEffect(() => {
-    if (viewMode !== "member") { setTenantCloudReady(false); return; }
+    if (viewMode !== "member") { setTenantCloudReady(false); setSyncBusy(false); return; }
     if (!supabase) { setTenantCloudReady(true); publishSyncStatus("local"); return; }
     let cancelled = false;
     const username = activeTenantUsername || firmSettings.username;
     (async () => {
       try {
         const tenant = await fetchTenant(username);
-        if (!tenant) { if (!cancelled) { setTenantCloudReady(true); publishSyncStatus("queued", "Bu firma bulutta bulunamadı; yerel kayıtlar korunuyor."); } return; }
+        if (!tenant) { if (!cancelled) { setTenantCloudReady(true); setSyncBusy(false); publishSyncStatus("queued", "Bu firma bulutta bulunamadı; yerel kayıtlar korunuyor."); } return; }
         if (cancelled) return;
         const snapshot = await fetchTenantSnapshot(tenant.id);
         if (cancelled || !snapshot) return;
@@ -1892,13 +1894,14 @@ export default function App() {
           });
         }
         setTenantCloudReady(true);
+        setSyncBusy(false);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
       } catch (error) {
-        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(true); publishSyncStatus("error", readableError(error, "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor.")); }
+        if (!cancelled) { reportAppDataIssue("Bulut firma verileri", error); setTenantCloudReady(true); setSyncBusy(false); publishSyncStatus("error", readableError(error, "Bulut verileri yüklenemedi; yerel kayıtlar kullanılmaya devam ediyor.")); }
       }
     })();
     return () => { cancelled = true; };
-  }, [viewMode, activeTenantUsername]);
+  }, [viewMode, activeTenantUsername, cloudRefreshToken]);
 
   useEffect(() => {
     if (viewMode !== "member" || !tenantCloudReady || !cloudTenantId || !supabase) return;
@@ -2482,13 +2485,20 @@ export default function App() {
       showToast("Supabase bağlantısı ayarlı değil. Veriler bu cihazda korunuyor; .env ayarlarını tamamlayın.");
       return;
     }
-    // Başarılı snapshot yüklemesi yerel cache'i zaten bulutla hizalar. Eski
-    // sekme state'ini tekrar buluta yazmak, buluttan silinmiş kayıtları
-    // yeniden diriltebildiği için manuel senkron artık temiz bir cloud reload
-    // başlatır; localStorage silinmez, açılış snapshot'ı ile üzerine yazılır.
     setSyncBusy(true);
-    window.location.reload();
-    return;
+    setSyncState("syncing");
+    setSyncMessage("Bekleyen değişiklikler işleniyor…");
+    publishSyncStatus("syncing", "Bekleyen değişiklikler işleniyor…");
+    try {
+      const fullyFlushed = await flushCloudQueue();
+      if (!fullyFlushed) publishSyncStatus("queued", "Bekleyen değişiklikler yeniden denenecek; güncel bulut verisi çekiliyor.");
+      setSyncMessage("Güncel bulut verisi çekiliyor…");
+      setCloudRefreshToken((value) => value + 1);
+    } catch (error) {
+      setSyncBusy(false);
+      publishSyncStatus("error", readableError(error, "Bekleyen senkronizasyon kuyruğu işlenemedi."));
+      showToast(`Senkronizasyon kuyruğu işlenemedi. ${readableError(error, "Bağlantı veya yetki ayarlarını kontrol edin.")}`);
+    }
   };
 
   const pdfTotals = useMemo(() => {
