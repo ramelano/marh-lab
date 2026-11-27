@@ -79,6 +79,8 @@ const DEFAULT_FIRM_SETTINGS = {
   password: "Kd!2026#92",
   showClassicSignatures: false,
   memberTheme: "dark",
+  memberAccentTheme: "purple-orange",
+  glassPricePerM2: 850,
   onboardingCompleted: false,
   cityDistrict: "",
   termsTemplate: `krom kaplama çelik zincir tahrik sistemi
@@ -1471,7 +1473,7 @@ function normalizeSettings(value: any, base = DEFAULT_FIRM_SETTINGS) {
   }
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const stringFields = ["username", "companyName", "tagline", "ownerName", "phone", "email", "address", "orderPrefix", "logoUrl", "watermarkText", "password", "termsTemplate"] as const;
-  const numberFields = ["nextOrderNumber", "aluminumKgPrice", "defaultProfitMargin", "vatRate", "watermarkOpacity", "dailyAllowance"] as const;
+  const numberFields = ["nextOrderNumber", "aluminumKgPrice", "glassPricePerM2", "defaultProfitMargin", "vatRate", "watermarkOpacity", "dailyAllowance"] as const;
   const normalized = { ...base, ...source };
   for (const key of stringFields) {
     if (typeof source[key] === "string") normalized[key] = source[key];
@@ -1488,6 +1490,9 @@ function normalizeSettings(value: any, base = DEFAULT_FIRM_SETTINGS) {
     }
   }
   normalized.memberTheme = source.memberTheme === "light" ? "light" : "dark";
+  const accentThemes = ["purple-orange", "purple", "orange", "emerald", "blue"];
+  normalized.memberAccentTheme = accentThemes.includes(source.memberAccentTheme) ? source.memberAccentTheme : "purple-orange";
+  normalized.glassPricePerM2 = Number.isFinite(Number(source.glassPricePerM2)) ? Number(source.glassPricePerM2) : 850;
   if (typeof source.onboardingCompleted === "boolean") normalized.onboardingCompleted = source.onboardingCompleted;
   else if (source.onboardingCompleted !== undefined) normalized.onboardingCompleted = Boolean(source.onboardingCompleted);
   if (typeof source.cityDistrict === "string") normalized.cityDistrict = source.cityDistrict;
@@ -1887,9 +1892,10 @@ export default function App() {
     const glassExtra = { "Şeffaf": 0, "Füme": 100, "Şeffaf+Füme": 100, "Bronz": 100, "Mavi": 150, "Yeşil": 150, "Buzlu": 120 }[glassColor] || 0;
     const motorExtra = motorized ? (activeSeriesObj.mechType === "giyotin" ? 900 : 450) : 0;
     const aluminumCost = activeSeriesObj.weightPerM2 * Number(firmSettings.aluminumKgPrice || 0);
-    const cost = activeSeriesObj.baseCostPerM2 + glassBase + glassExtra + motorExtra + aluminumCost * 0.15;
+    const glassPriceAdjustment = Number(firmSettings.glassPricePerM2 ?? 850) - 850;
+    const cost = activeSeriesObj.baseCostPerM2 + glassBase + glassExtra + motorExtra + aluminumCost * 0.15 + glassPriceAdjustment;
     return Math.round(cost * (1 + Number(firmSettings.defaultProfitMargin || 0) / 100));
-  }, [activeSeriesObj, glassType, glassColor, motorized, firmSettings.aluminumKgPrice, firmSettings.defaultProfitMargin]);
+  }, [activeSeriesObj, glassType, glassColor, motorized, firmSettings.aluminumKgPrice, firmSettings.defaultProfitMargin, firmSettings.glassPricePerM2]);
 
   const currentDraftItem = useMemo(() => {
     const areaM2 =
@@ -2975,7 +2981,7 @@ export default function App() {
       {/* VIEW 2: ÜYE ÇALIŞMA ALANI (TEKLİF & 3D CAD STÜDYOSU)                 */}
       {/* ==================================================================== */}
       {viewMode === "member" && (
-        <div className={`no-print flex-1 flex flex-col justify-between member-theme-${firmSettings.memberTheme || "dark"}`}>
+        <div className={`no-print flex-1 flex flex-col justify-between member-theme-${firmSettings.memberTheme || "dark"} member-accent-${firmSettings.memberAccentTheme || "purple-orange"}`}>
           <div>
             <header className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-4">
               <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
@@ -3297,7 +3303,7 @@ export default function App() {
                       <span className="text-[11px] text-slate-400">
                         Tahmini Maliyet:{" "}
                         <strong className="text-slate-200">
-                          ₺{activeSeriesObj.baseCostPerM2.toLocaleString("tr-TR")}/m²
+                          ₺{(activeSeriesObj.baseCostPerM2 + Number(firmSettings.glassPricePerM2 ?? 850) - 850).toLocaleString("tr-TR")}/m²
                         </strong>
                       </span>
                     </div>
@@ -3479,7 +3485,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-amber-500/25 rounded-2xl p-4 space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold text-amber-400">Şantiye Mesafe, Ekip Masrafı & Hedef Net Kâr</h3><button onClick={()=>setSiteMode(!siteMode)} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-sky-300">{siteMode?"Şantiye Hızlı Mod: Açık":"Standart Görünüm / Şantiye Hızlı Mod"}</button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2"><label className="text-[11px] text-slate-400">Montaj Şehri<select value={siteCity} onChange={e=>{setSiteCity(e.target.value);const c=(firmSettings.cityTariffs||[]).find(x=>x.city===e.target.value);if(c){setTravelCost(Number(c.travel)||0);if(c.unitPrice>0)setCustomUnitPrice(Number(c.unitPrice));}}} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white">{(firmSettings.cityTariffs||[]).map(c=><option key={c.city}>{c.city}</option>)}</select></label><label className="text-[11px] text-slate-400">Yol / Nakliye ₺<NumericInput value={travelCost} onChange={setTravelCost} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Eleman Sayısı<NumericInput min="1" value={teamSize} onChange={setTeamSize} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Montaj Süresi (Gün)<NumericInput min="1" value={workDays} onChange={setWorkDays} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><div className="text-[11px] text-slate-400">Toplam Ekip Masrafı <div className="mt-2 text-sm font-bold text-sky-300">₺{(teamSize*workDays*Number(firmSettings.dailyAllowance||0)).toLocaleString("tr-TR")}</div></div></div><div className="flex flex-wrap gap-2 items-center"><button onClick={()=>setPriceMode(priceMode==="unit"?"target":"unit")} className="rounded-lg bg-slate-800 px-3 py-2 text-xs text-white">Mod: {priceMode==="unit"?"Birim Fiyat / Kâr (%)":"Hedef Net Kâr (₺)"} • Değiştir</button>{priceMode==="target"?<label className="text-xs text-slate-300">Hedef net kâr ₺ <NumericInput value={targetProfit} onChange={setTargetProfit} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-2 py-1.5 text-white"/></label>:null}<div className="text-xs text-slate-300">{(()=>{const cost=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);const profit=currentDraftItem.total-cost;return <>Toplam iç maliyet ₺{cost.toLocaleString("tr-TR")} • Net kâr ₺{profit.toLocaleString("tr-TR")} • Net marj %{(currentDraftItem.total?profit/currentDraftItem.total*100:0).toFixed(1)}</>;})()} <span className="text-slate-500">(müşteri belgesinde gösterilmez)</span></div>{priceMode==="target"&&<button onClick={()=>{const costs=activeSeriesObj.baseCostPerM2*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);setCustomUnitPrice(Math.ceil((costs+targetProfit)/Math.max(.01,currentDraftItem.areaM2)));}} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Hedefi Fiyata Uygula</button>}</div></div>
+                  <div className="bg-slate-900 border border-amber-500/25 rounded-2xl p-4 space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold text-amber-400">Şantiye Mesafe, Ekip Masrafı & Hedef Net Kâr</h3><button onClick={()=>setSiteMode(!siteMode)} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-sky-300">{siteMode?"Şantiye Hızlı Mod: Açık":"Standart Görünüm / Şantiye Hızlı Mod"}</button></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2"><label className="text-[11px] text-slate-400">Montaj Şehri<select value={siteCity} onChange={e=>{setSiteCity(e.target.value);const c=(firmSettings.cityTariffs||[]).find(x=>x.city===e.target.value);if(c){setTravelCost(Number(c.travel)||0);if(c.unitPrice>0)setCustomUnitPrice(Number(c.unitPrice));}}} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white">{(firmSettings.cityTariffs||[]).map(c=><option key={c.city}>{c.city}</option>)}</select></label><label className="text-[11px] text-slate-400">Yol / Nakliye ₺<NumericInput value={travelCost} onChange={setTravelCost} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Eleman Sayısı<NumericInput min="1" value={teamSize} onChange={setTeamSize} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><label className="text-[11px] text-slate-400">Montaj Süresi (Gün)<NumericInput min="1" value={workDays} onChange={setWorkDays} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 px-2 py-2 text-xs text-white"/></label><div className="text-[11px] text-slate-400">Toplam Ekip Masrafı <div className="mt-2 text-sm font-bold text-sky-300">₺{(teamSize*workDays*Number(firmSettings.dailyAllowance||0)).toLocaleString("tr-TR")}</div></div></div><div className="flex flex-wrap gap-2 items-center"><button onClick={()=>setPriceMode(priceMode==="unit"?"target":"unit")} className="rounded-lg bg-slate-800 px-3 py-2 text-xs text-white">Mod: {priceMode==="unit"?"Birim Fiyat / Kâr (%)":"Hedef Net Kâr (₺)"} • Değiştir</button>{priceMode==="target"?<label className="text-xs text-slate-300">Hedef net kâr ₺ <NumericInput value={targetProfit} onChange={setTargetProfit} className="ml-2 w-36 rounded-lg bg-slate-950 border border-slate-800 px-2 py-1.5 text-white"/></label>:null}<div className="text-xs text-slate-300">{(()=>{const cost=(activeSeriesObj.baseCostPerM2+Number(firmSettings.glassPricePerM2??850)-850)*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);const profit=currentDraftItem.total-cost;return <>Toplam iç maliyet ₺{cost.toLocaleString("tr-TR")} • Net kâr ₺{profit.toLocaleString("tr-TR")} • Net marj %{(currentDraftItem.total?profit/currentDraftItem.total*100:0).toFixed(1)}</>;})()} <span className="text-slate-500">(müşteri belgesinde gösterilmez)</span></div>{priceMode==="target"&&<button onClick={()=>{const costs=(activeSeriesObj.baseCostPerM2+Number(firmSettings.glassPricePerM2??850)-850)*currentDraftItem.areaM2+travelCost+teamSize*workDays*Number(firmSettings.dailyAllowance||0);setCustomUnitPrice(Math.ceil((costs+targetProfit)/Math.max(.01,currentDraftItem.areaM2)));}} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Hedefi Fiyata Uygula</button>}</div></div>
                   {/* SEPETTEKİ ÇOKLU CEPHE KALEMLERİ */}
                   {basketItems.length > 0 && (
                     <div className="bg-slate-950/80 border border-amber-500/30 rounded-2xl p-3.5 space-y-2">
@@ -3528,7 +3534,8 @@ export default function App() {
                     const yol = Number(travelCost) || 0;
                     const ekip = Number(teamSize) * Number(workDays) * Number(firmSettings.dailyAllowance || 0);
                     const sahaToplam = yol + ekip;
-                    const malzeme = effectiveItems.reduce((sum, item) => { const series = SYSTEM_SERIES.find((candidate) => candidate.id === item.seriesId) || activeSeriesObj; const area = Number(item.widthCm || 0) * Number(item.heightCm || 0) * Number(item.quantity || 1) / 10000; return sum + Number(series.baseCostPerM2 || 0) * area; }, 0);
+                    const glassPriceAdjustment = Number(firmSettings.glassPricePerM2 ?? 850) - 850;
+                    const malzeme = effectiveItems.reduce((sum, item) => { const series = SYSTEM_SERIES.find((candidate) => candidate.id === item.seriesId) || activeSeriesObj; const area = Number(item.widthCm || 0) * Number(item.heightCm || 0) * Number(item.quantity || 1) / 10000; return sum + (Number(series.baseCostPerM2 || 0) + glassPriceAdjustment) * area; }, 0);
                     const toplamIcMaliyet = malzeme + sahaToplam;
                     const satisTutari = Number(financialSummary.grandTotal || 0);
                     const netKar = satisTutari - toplamIcMaliyet;
@@ -4162,8 +4169,11 @@ export default function App() {
               <div className="max-w-5xl mx-auto px-3 sm:px-6 py-6 space-y-5">
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
                   <div><h2 className="text-sm font-bold text-white">Üye Paneli Teması</h2><p className="text-xs text-slate-400 mt-1">Panel görünümünüz firma ayarlarıyla birlikte kaydedilir.</p></div>
-                  <div className="flex gap-2" role="group" aria-label="Üye paneli teması">
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Üye paneli görünümü">
                     {[{ id: "dark", label: "Koyu Mod" }, { id: "light", label: "Açık Mod" }].map((theme) => <button key={theme.id} type="button" aria-pressed={(firmSettings.memberTheme || "dark") === theme.id} onClick={() => setFirmSettings((prev) => ({ ...prev, memberTheme: theme.id }))} className={`rounded-xl px-4 py-2 text-xs font-bold border transition ${(firmSettings.memberTheme || "dark") === theme.id ? "bg-violet-500 text-slate-950 border-violet-400" : "bg-slate-950 text-slate-300 border-slate-700 hover:bg-slate-800"}`}>{theme.label}</button>)}
+                    <div className="w-full flex flex-wrap gap-1.5 pt-1" role="group" aria-label="Panel vurgu rengi">
+                      {[{ id: "purple-orange", label: "Mor & Turuncu" }, { id: "purple", label: "Mor" }, { id: "orange", label: "Turuncu" }, { id: "emerald", label: "Zümrüt Yeşili" }, { id: "blue", label: "Mavi" }].map((accent) => <button key={accent.id} type="button" aria-pressed={(firmSettings.memberAccentTheme || "purple-orange") === accent.id} onClick={() => setFirmSettings((prev) => ({ ...prev, memberAccentTheme: accent.id }))} className={`rounded-lg px-3 py-1.5 text-[11px] font-bold border transition ${(firmSettings.memberAccentTheme || "purple-orange") === accent.id ? "bg-violet-500 text-slate-950 border-violet-400" : "bg-slate-950 text-slate-300 border-slate-700 hover:bg-slate-800"}`}>{accent.label}</button>)}
+                    </div>
                   </div>
                 </div>
                 <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
@@ -4351,7 +4361,7 @@ export default function App() {
                     <div className="text-xs font-bold text-amber-400 uppercase">
                       Alüminyum Kg Fiyatı, Kâr Oranı &amp; KDV
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[11px] text-slate-400 mb-1">
                           Alüminyum Kg (₺)
@@ -4367,6 +4377,17 @@ export default function App() {
                           }
                           className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"
                         />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-400 mb-1">
+                          Cam m² Fiyatı (₺)
+                        </label>
+                        <NumericInput
+                          value={firmSettings.glassPricePerM2 ?? 850}
+                          onChange={(value) => setFirmSettings((prev) => ({ ...prev, glassPricePerM2: value }))}
+                          className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"
+                        />
+                        <p className="text-[10px] text-slate-500 mt-1">850 ₺ referansı mevcut tahmini maliyetleri korur; fark iç maliyete yansır.</p>
                       </div>
                       <div>
                         <label className="block text-[11px] text-slate-400 mb-1">
