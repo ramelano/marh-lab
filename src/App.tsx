@@ -2392,14 +2392,24 @@ export default function App() {
   };
 
   const deleteFinanceEntry = (entry) => {
-    if (String(entry.id).startsWith("legacy-deposit-")) {
-      const quoteId = String(entry.id).replace("legacy-deposit-", "");
-      setQuotes((prev) => prev.map((quote) => quote.id === quoteId ? { ...quote, deposit: 0 } : quote));
-    } else {
-      setFinanceEntries((prev) => prev.filter((item) => item.id !== entry.id));
-      setDeletedFinanceIds((prev) => prev.includes(entry.id) ? prev : [...prev, entry.id]);
-    }
-    showToast("Mali hareket silindi; kasa ve alacak yeniden hesaplandı.");
+    const amountSummary = `₺${Number(entry.amount || 0).toLocaleString("tr-TR")}`;
+    const dateSummary = entry.date || "Tarihsiz";
+    const customerSummary = entry.customerName || "Genel hareket";
+    setConfirmDialog({
+      title: "Muhasebe Hareketini Sil",
+      message: `${dateSummary} • ${customerSummary} • ${amountSummary} tutarındaki ${entry.description || "mali hareket"} silinsin mi? Kasa ve alacak bakiyesi yeniden hesaplanacaktır.`,
+      confirmLabel: "Evet, Hareketi Sil",
+      onConfirm: () => {
+        if (String(entry.id).startsWith("legacy-deposit-")) {
+          const quoteId = String(entry.id).replace("legacy-deposit-", "");
+          setQuotes((prev) => prev.map((quote) => quote.id === quoteId ? { ...quote, deposit: 0 } : quote));
+        } else {
+          setFinanceEntries((prev) => prev.filter((item) => item.id !== entry.id));
+          setDeletedFinanceIds((prev) => prev.includes(entry.id) ? prev : [...prev, entry.id]);
+        }
+        showToast("Mali hareket silindi; kasa ve alacak yeniden hesaplandı.");
+      },
+    });
   };
 
   const handleLogoUpload = (e) => {
@@ -3564,9 +3574,12 @@ export default function App() {
                               <button type="button" onClick={() => { setEditingQuoteId(it.id); setFacadeName(it.facadeName); setSelectedSeriesId(it.seriesId); setWidthCm(it.widthCm); setHeightCm(it.heightCm); setPanels(it.panels); setAngleDeg(it.angleDeg||0); setQuantity(it.quantity||1); setGlassType(it.glassType); setGlassColor(it.glassColor); setAluminumColor(it.aluminumColor); setMotorized(!!it.motorized); setCustomUnitPrice(it.unitPrice); setOpeningDirection(it.openingDirection||"Sola Toplanır"); setBasketItems(prev=>prev.filter(x=>x.id!==it.id)); }} className="text-sky-300 hover:text-white p-1">Düzenle</button>
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setBasketItems((prev) => prev.filter((x) => x.id !== it.id))
-                                }
+                                onClick={() => setConfirmDialog({
+                                  title: "Teklif Kalemini Sil",
+                                  message: `${it.facadeName} (${Number(it.widthCm) * 10}×${Number(it.heightCm) * 10} mm) kalemi teklif sepetinden silinsin mi?`,
+                                  confirmLabel: "Evet, Kalemi Sil",
+                                  onConfirm: () => setBasketItems((prev) => prev.filter((x) => x.id !== it.id)),
+                                })}
                                 className="text-rose-400 hover:text-rose-300 p-1"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -4287,9 +4300,12 @@ export default function App() {
                           {firmSettings.logoUrl && (
                             <button
                               type="button"
-                              onClick={() =>
-                                setFirmSettings((prev) => ({ ...prev, logoUrl: "" }))
-                              }
+                              onClick={() => setConfirmDialog({
+                                title: "Firma Logosunu Kaldır",
+                                message: "Firma logosu ayarlardan ve yeni PDF çıktılarından kaldırılıp silinsin mi?",
+                                confirmLabel: "Evet, Logoyu Kaldır",
+                                onConfirm: () => setFirmSettings((prev) => ({ ...prev, logoUrl: "" })),
+                              })}
                               className="text-xs text-rose-400 hover:underline font-medium"
                             >
                               Kaldır
