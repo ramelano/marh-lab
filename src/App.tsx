@@ -5,7 +5,6 @@ import {
   fetchAdminTenants,
   fetchTenant,
   fetchTenantSnapshot,
-  flushCloudQueue,
   persistTenants,
   publishSyncStatus,
   quoteFromCloud,
@@ -1832,21 +1831,16 @@ export default function App() {
         const remoteCustomers = cloudCustomers.filter((row) => row && !row.is_deleted).map(customerFromCloud).map(normalizeCustomer);
         const remoteQuotes = cloudQuotes.filter((row) => row && !row.is_deleted).map(quoteFromCloud).map(normalizeQuote);
         const deletedQuotes = cloudQuotes.filter((row) => row && row.is_deleted).map((row) => ({ type: "quote", deletedAt: row.deleted_at || new Date().toISOString(), data: normalizeQuote(quoteFromCloud(row)) }));
-        const localCustomers = readStoredArray(prefix + "customers", [], normalizeCustomer);
-        const localQuotes = readStoredArray(prefix + "quotes", [], normalizeQuote);
         const localTrash = readStoredArray(prefix + "trash", [], normalizeTrashEntry);
-        const deletedCustomerNames = new Set([
-          ...localTrash.filter((entry) => entry.type === "customer").map((entry) => String(entry.data?.name || "").toLocaleLowerCase("tr")),
-          ...cloudCustomers.filter((row) => row && row.is_deleted).map((row) => String(row.name || "").toLocaleLowerCase("tr")),
-        ]);
+        const deletedCustomerNames = new Set(cloudCustomers.filter((row) => row && row.is_deleted).map((row) => String(row.name || "").toLocaleLowerCase("tr")));
         const deletedQuoteCodes = new Set([
-          ...localTrash.filter((entry) => entry.type === "quote").map((entry) => String(entry.data?.orderCode || "").toLocaleLowerCase("tr")),
           ...cloudQuotes.filter((row) => row && row.is_deleted).map((row) => String(row.order_code || "").toLocaleLowerCase("tr")),
         ]);
-        const customersByName = new Map(localCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
-        remoteCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).forEach((customer) => customersByName.set(String(customer.name).toLocaleLowerCase("tr"), customer));
-        const quotesByCode = new Map(localQuotes.filter((quote) => !deletedQuoteCodes.has(String(quote.orderCode || "").toLocaleLowerCase("tr"))).map((quote) => [quote.orderCode, quote]));
-        remoteQuotes.forEach((quote) => quotesByCode.set(quote.orderCode, quote));
+        // Başarılı bir bulut snapshot'ında bulut yetkili kaynaktır. Yerel
+        // listeleri birleştirmek, buluttan silinmiş eski kayıtları normal
+        // tarayıcı sekmesinde yeniden göstermeye neden oluyordu.
+        const customersByName = new Map(remoteCustomers.filter((customer) => !deletedCustomerNames.has(String(customer.name).toLocaleLowerCase("tr"))).map((customer) => [String(customer.name).toLocaleLowerCase("tr"), customer]));
+        const quotesByCode = new Map(remoteQuotes.filter((quote) => !deletedQuoteCodes.has(String(quote.orderCode || "").toLocaleLowerCase("tr"))).map((quote) => [quote.orderCode, quote]));
         const trashByCode = new Map(localTrash.map((entry, index) => [`${entry.type || "quote"}:${entry.data?.orderCode || entry.data?.id || index}`, entry]));
         deletedQuotes.forEach((entry) => trashByCode.set(entry.data.orderCode, entry));
         setFirmSettings(normalizeSettings(settingsFromCloud(snapshot.settings, firmSettings), firmSettings));
@@ -1861,11 +1855,10 @@ export default function App() {
         writeStoredValue(prefix + "trash", reconciledTrash);
         setFinanceCloudEnabled(snapshot.financeCloudEnabled);
         if (snapshot.financeCloudEnabled) {
-          const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
           const storedDeletedFinanceIds = readStoredArray(prefix + "deleted-finance", [], (value) => String(value));
           const remoteDeletedFinanceIds = Array.isArray(snapshot.deletedFinanceIds) ? snapshot.deletedFinanceIds.map((value) => String(value)) : [];
           const deletedFinanceIdSet = new Set([...deletedFinanceIds, ...storedDeletedFinanceIds, ...remoteDeletedFinanceIds]);
-          const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
+          const mergedFinance = new Map<string, any>();
           const cloudFinanceEntries = (Array.isArray(snapshot.financeEntries) ? snapshot.financeEntries : []).flatMap((entry, index) => {
             if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
               reportAppDataIssue(`Bulut finans satırı ${index + 1}`, new Error("Kayıt nesne biçiminde değil; bu satır atlandı."));
@@ -1885,12 +1878,7 @@ export default function App() {
               updatedAt: entry.updated_at,
             })];
           });
-          cloudFinanceEntries.forEach((entry) => {
-            const localEntry = mergedFinance.get(entry.id);
-            const localTime = Date.parse(localEntry?.updatedAt || "") || 0;
-            const cloudTime = Date.parse(entry.updatedAt || "") || 0;
-            if (!localEntry || cloudTime >= localTime) mergedFinance.set(entry.id, entry);
-          });
+          cloudFinanceEntries.forEach((entry) => mergedFinance.set(entry.id, entry));
           setDeletedFinanceIds([...deletedFinanceIdSet]);
           const reconciledFinance = [...mergedFinance.values()].filter((entry) => !deletedFinanceIdSet.has(entry.id));
           setFinanceEntries(reconciledFinance);
@@ -2494,29 +2482,13 @@ export default function App() {
       showToast("Supabase bağlantısı ayarlı değil. Veriler bu cihazda korunuyor; .env ayarlarını tamamlayın.");
       return;
     }
+    // Başarılı snapshot yüklemesi yerel cache'i zaten bulutla hizalar. Eski
+    // sekme state'ini tekrar buluta yazmak, buluttan silinmiş kayıtları
+    // yeniden diriltebildiği için manuel senkron artık temiz bir cloud reload
+    // başlatır; localStorage silinmez, açılış snapshot'ı ile üzerine yazılır.
     setSyncBusy(true);
-    try {
-      setSyncState("syncing");
-      setSyncMessage("Yerel kayıtlar buluta aktarılıyor…");
-      publishSyncStatus("syncing", "Yerel kayıtlar buluta aktarılıyor…");
-      const tenant = cloudTenantId ? { id: cloudTenantId } : await fetchTenant(activeTenantUsername);
-      if (!tenant?.id) throw new Error("Bu firma Supabase tenants tablosunda bulunamadı.");
-      setCloudTenantId(tenant.id);
-      await syncTenantSnapshot(tenant.id, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds);
-      const fullySynced = await flushCloudQueue();
-      if (!fullySynced) {
-        publishSyncStatus("queued", "Bazı değişiklikler bağlantı gelince yeniden gönderilecek.");
-        showToast("Senkronizasyon kuyruğa alındı; bağlantı sağlanınca tamamlanacak.");
-      } else {
-        publishSyncStatus("synced", "Firma verileri bulutla eşitlendi.");
-        showToast("Firma verileri bulutla eşitlendi.");
-      }
-    } catch (error) {
-      publishSyncStatus("error", readableError(error, "Bulut aktarımı tamamlanamadı."));
-      showToast(`Buluta eşitleme başarısız; yerel kayıtlarınız korunuyor. ${readableError(error, "Bağlantı veya yetki ayarlarını kontrol edin.")}`);
-    } finally {
-      setSyncBusy(false);
-    }
+    window.location.reload();
+    return;
   };
 
   const pdfTotals = useMemo(() => {
