@@ -52,6 +52,8 @@ import {
   Download,
   DatabaseBackup,
   WalletCards,
+  Menu,
+  ArrowLeft,
 } from "lucide-react";
 
 // ============================================================================
@@ -1661,6 +1663,7 @@ export default function App() {
   }, [viewMode, showcasePlaying, showcaseDirection]);
 
   const [memberTab, setMemberTab] = useState("studio");
+  const [mobileMemberMenuOpen, setMobileMemberMenuOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -1959,6 +1962,10 @@ export default function App() {
     }
     draftBaselineRef.current = null;
     setMemberTab(nextTab);
+  };
+  const navigateFromMobileDock = (nextTab) => {
+    setMobileMemberMenuOpen(false);
+    requestMemberNavigation(nextTab);
   };
   const calcQuoteTotals = (items, discount = 0, vat = false) => {
     const totalArea = items.reduce((a, it) => a + (Number(it.widthCm) * Number(it.heightCm) * Number(it.quantity || 1)) / 10000, 0);
@@ -2991,11 +2998,11 @@ export default function App() {
       {/* VIEW 2: ÜYE ÇALIŞMA ALANI (TEKLİF & 3D CAD STÜDYOSU)                 */}
       {/* ==================================================================== */}
       {viewMode === "member" && (
-        <div className={`no-print flex-1 flex flex-col justify-between member-theme-${firmSettings.memberTheme || "dark"} member-accent-${firmSettings.memberAccentTheme || "purple-orange"}`}>
+        <div className={`no-print flex-1 flex flex-col justify-between member-mobile-shell member-theme-${firmSettings.memberTheme || "dark"} member-accent-${firmSettings.memberAccentTheme || "purple-orange"}`}>
           <div>
-            <header className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-4">
-              <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
-                <div className="flex items-center gap-3">
+            <header className="member-header max-w-[1440px] mx-auto px-3 sm:px-6 pt-4">
+              <div className="member-header-card bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+                <div className="member-brand flex items-center gap-3 min-w-0">
                   <div className="w-11 h-11 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center overflow-hidden shadow-md shrink-0">
                     {firmSettings.logoUrl ? (
                       <img
@@ -3017,7 +3024,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <nav className="flex flex-1 flex-wrap items-center gap-1.5 min-w-0">
+                <nav className="member-desktop-nav flex flex-1 flex-wrap items-center gap-1.5 min-w-0">
                   {memberTab !== "home" && <button
                     type="button"
                     onClick={() => requestMemberNavigation("home")}
@@ -3058,7 +3065,7 @@ export default function App() {
                   )}
                 </nav>
 
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="member-desktop-actions flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={syncLocalDataToCloud}
@@ -3086,8 +3093,39 @@ export default function App() {
                     <LogOut className="w-4 h-4" /> Çıkış Yap
                   </button>
                 </div>
+                <button type="button" className="member-mobile-menu-trigger" onClick={() => setMobileMemberMenuOpen(true)} aria-label="Modül menüsünü aç">
+                  <Menu className="w-5 h-5" />
+                </button>
               </div>
             </header>
+
+            <div className={`member-mobile-dock ${mobileMemberMenuOpen ? "is-open" : ""}`}>
+              <button type="button" className="member-mobile-dock-handle" onClick={() => setMobileMemberMenuOpen((open) => !open)} aria-label={mobileMemberMenuOpen ? "Modül menüsünü kapat" : "Modül menüsünü aç"}>
+                <Menu className="w-5 h-5" />
+              </button>
+              <div className="member-mobile-dock-panel" role="navigation" aria-label="Üye çalışma alanı modülleri">
+                {[
+                  { tab: "home", label: "Modüller", icon: Layers },
+                  { tab: "studio", label: "Yeni Teklif", icon: Plus },
+                  { tab: "pending", label: "Bekleyenler", icon: Clock, count: pendingQuotes.length },
+                  { tab: "approved", label: "Onaylananlar", icon: CheckCircle2, count: approvedQuotes.length },
+                  { tab: "archive", label: "Müşteri Arşivi", icon: Users },
+                  { tab: "accounting", label: "Genel Muhasebe", icon: WalletCards },
+                  { tab: "settings", label: "Ayarlar", icon: Settings },
+                ].map(({ tab, label, icon: Icon, count }) => (
+                  <button key={tab} type="button" className={`member-mobile-dock-item ${memberTab === tab ? "is-active" : ""}`} onClick={() => navigateFromMobileDock(tab)}>
+                    <Icon className="w-4 h-4" />
+                    <span>{label}</span>
+                    {typeof count === "number" && <b>{count}</b>}
+                  </button>
+                ))}
+                <button type="button" className="member-mobile-dock-back" onClick={() => navigateFromMobileDock("home")}>
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Geri</span>
+                </button>
+              </div>
+            </div>
+            {mobileMemberMenuOpen && <button type="button" className="member-mobile-dock-scrim" aria-label="Menüyü kapat" onClick={() => setMobileMemberMenuOpen(false)} />}
 
             {memberTab === "home" && (
               <section className="max-w-[1440px] mx-auto px-3 sm:px-6 py-7 space-y-5">

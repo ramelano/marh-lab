@@ -1695,3 +1695,189 @@ body {
 .member-accent-blue .text-violet-400 { color: #0284c7 !important; }
 .member-accent-blue .border-amber-400,
 .member-accent-blue .border-violet-400 { border-color: #0ea5e9 !important; }
+
+/* Logged-in member mobile shell only; desktop and landing remain unchanged. */
+.member-accent-purple-orange { --member-accent: #8b5cf6; }
+.member-accent-purple { --member-accent: #8b5cf6; }
+.member-accent-orange { --member-accent: #f97316; }
+.member-accent-emerald { --member-accent: #10b981; }
+.member-accent-blue { --member-accent: #0ea5e9; }
+
+.member-mobile-shell {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.member-mobile-menu-trigger,
+.member-mobile-dock,
+.member-mobile-dock-scrim {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .member-header {
+    width: 100%;
+    padding: 10px 10px 0;
+  }
+
+  .member-header-card {
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    padding: 9px 10px !important;
+    border-radius: 15px !important;
+  }
+
+  .member-brand {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px !important;
+  }
+
+  .member-brand > div:first-child {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 10px !important;
+  }
+
+  .member-brand > div:last-child {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .member-brand > div:last-child > div:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.78rem;
+  }
+
+  .member-brand > div:last-child > div:last-child {
+    display: none;
+  }
+
+  .member-desktop-nav,
+  .member-desktop-actions {
+    display: none !important;
+  }
+
+  .member-mobile-menu-trigger {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid color-mix(in srgb, var(--member-accent) 55%, transparent);
+    border-radius: 11px;
+    background: color-mix(in srgb, var(--member-accent) 16%, transparent);
+    color: var(--member-accent);
+  }
+
+  .member-mobile-dock {
+    display: block;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 292px);
+    z-index: 90;
+    pointer-events: none;
+  }
+
+  .member-mobile-dock-handle {
+    pointer-events: auto;
+    position: absolute;
+    top: 42%;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 64px;
+    border: 1px solid color-mix(in srgb, var(--member-accent) 55%, transparent);
+    border-left: 0;
+    border-radius: 0 16px 16px 0;
+    background: color-mix(in srgb, var(--member-accent) 22%, #0f172a);
+    color: var(--member-accent);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.25);
+  }
+
+  .member-mobile-dock-panel {
+    pointer-events: auto;
+    position: absolute;
+    inset: 0 auto 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: min(86vw, 292px);
+    padding: 76px 12px 16px;
+    background: rgba(8, 13, 24, 0.97);
+    border-right: 1px solid color-mix(in srgb, var(--member-accent) 32%, #334155);
+    box-shadow: 18px 0 44px rgba(0, 0, 0, 0.42);
+    transform: translateX(-104%);
+    transition: transform 180ms ease;
+  }
+
+  .member-mobile-dock.is-open .member-mobile-dock-panel {
+    transform: translateX(0);
+  }
+
+  .member-mobile-dock-item,
+  .member-mobile-dock-back {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-height: 42px;
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    color: #cbd5e1;
+    text-align: left;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .member-mobile-dock-item svg,
+  .member-mobile-dock-back svg {
+    color: var(--member-accent);
+    flex: 0 0 auto;
+  }
+
+  .member-mobile-dock-item b {
+    margin-left: auto;
+    color: var(--member-accent);
+    font-size: 0.7rem;
+  }
+
+  .member-mobile-dock-item.is-active {
+    border-color: color-mix(in srgb, var(--member-accent) 42%, transparent);
+    background: color-mix(in srgb, var(--member-accent) 14%, transparent);
+    color: #fff;
+  }
+
+  .member-mobile-dock-back {
+    margin-top: auto;
+    border-color: color-mix(in srgb, var(--member-accent) 38%, transparent);
+    background: color-mix(in srgb, var(--member-accent) 12%, transparent);
+    color: var(--member-accent);
+  }
+
+  .member-mobile-dock-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 89;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(2, 6, 23, 0.48);
+  }
+}
