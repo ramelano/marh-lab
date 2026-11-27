@@ -13,10 +13,15 @@ create table if not exists public.financial_transactions (
   kind text not null check (kind in ('income', 'expense', 'refund', 'adjustment_in', 'adjustment_out')),
   amount numeric(14,2) not null check (amount >= 0),
   transaction_date date not null default current_date,
+  due_date date null,
+  is_closed boolean not null default false,
   description text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.financial_transactions add column if not exists due_date date null;
+alter table public.financial_transactions add column if not exists is_closed boolean not null default false;
 
 create index if not exists financial_transactions_tenant_date_idx
   on public.financial_transactions (tenant_id, transaction_date desc);

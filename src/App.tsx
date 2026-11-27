@@ -1574,7 +1574,7 @@ function normalizeAdminFirm(value: any) {
 function normalizeFinanceEntry(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Finans hareketi", new Error("Kayıt nesne biçiminde değil; güvenli finans alanları kullanıldı."));
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  return { ...source, id: String(source.id || `finance-${Date.now()}`), customerName: String(source.customerName || ""), kind: String(source.kind || "expense"), amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0, date: String(source.date || ""), paymentMethod: String(source.paymentMethod || "Nakit"), dueDate: String(source.dueDate || ""), isClosed: Boolean(source.isClosed) };
+  return { ...source, id: String(source.id || `finance-${Date.now()}`), customerName: String(source.customerName || ""), kind: String(source.kind || "expense"), amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0, date: String(source.date || ""), paymentMethod: String(source.paymentMethod || "Nakit"), dueDate: String(source.dueDate || ""), isClosed: Boolean(source.isClosed), updatedAt: String(source.updatedAt || "") };
 }
 
 function normalizeTrashEntry(value: any) {
@@ -1834,8 +1834,10 @@ export default function App() {
         setTrash([...trashByCode.values()]);
         setFinanceCloudEnabled(snapshot.financeCloudEnabled);
         if (snapshot.financeCloudEnabled) {
-        const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
-        const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
+          const localFinance = readStoredArray(prefix + "finance", [], normalizeFinanceEntry);
+          const storedDeletedFinanceIds = readStoredArray(prefix + "deleted-finance", [], (value) => String(value));
+          const deletedFinanceIdSet = new Set([...deletedFinanceIds, ...storedDeletedFinanceIds]);
+          const mergedFinance = new Map<string, any>(localFinance.map((entry) => [entry.id, entry]));
           const cloudFinanceEntries = (Array.isArray(snapshot.financeEntries) ? snapshot.financeEntries : []).flatMap((entry, index) => {
             if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
               reportAppDataIssue(`Bulut finans satırı ${index + 1}`, new Error("Kayıt nesne biçiminde değil; bu satır atlandı."));
@@ -1849,11 +1851,20 @@ export default function App() {
               kind: entry.kind,
               amount: entry.amount,
               date: entry.transaction_date,
+              dueDate: entry.due_date,
               description: entry.description || "",
+              isClosed: entry.is_closed,
+              updatedAt: entry.updated_at,
             })];
           });
-          cloudFinanceEntries.forEach((entry) => mergedFinance.set(entry.id, entry));
-          setFinanceEntries([...mergedFinance.values()].filter((entry) => !deletedFinanceIds.includes(entry.id)));
+          cloudFinanceEntries.forEach((entry) => {
+            const localEntry = mergedFinance.get(entry.id);
+            const localTime = Date.parse(localEntry?.updatedAt || "") || 0;
+            const cloudTime = Date.parse(entry.updatedAt || "") || 0;
+            if (!localEntry || cloudTime >= localTime) mergedFinance.set(entry.id, entry);
+          });
+          setDeletedFinanceIds([...deletedFinanceIdSet]);
+          setFinanceEntries([...mergedFinance.values()].filter((entry) => !deletedFinanceIdSet.has(entry.id)));
         }
         setTenantCloudReady(true);
         publishSyncStatus("synced", "Bu firmanın ayar, müşteri ve teklifleri bulutla eşitlendi.");
@@ -2012,10 +2023,12 @@ export default function App() {
   }, [financeEntries, approvedQuotes]);
   const signedFinanceAmount = (entry) => ["income", "adjustment_in"].includes(entry.kind) ? Number(entry.amount || 0) : -Number(entry.amount || 0);
   const approvedCustomerWork = (name) => approvedQuotes.filter((quote) => quote.customerName === name).reduce((sum, quote) => sum + quoteTotal(quote), 0);
-  const customerNetPayments = (name) => allFinanceEntries.filter((entry) => entry.customerName === name).reduce((sum, entry) => sum + signedFinanceAmount(entry), 0);
+  const isCashRealized = (entry) => !entry.dueDate || entry.isClosed;
+  const cashFinanceEntries = useMemo(() => allFinanceEntries.filter(isCashRealized), [allFinanceEntries]);
+  const customerNetPayments = (name) => cashFinanceEntries.filter((entry) => entry.customerName === name).reduce((sum, entry) => sum + signedFinanceAmount(entry), 0);
   const customerReceivable = (name) => Math.max(0, approvedCustomerWork(name) - customerNetPayments(name));
-  const totalReceived = allFinanceEntries.filter((entry) => ["income", "adjustment_in"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-  const totalOutgoings = allFinanceEntries.filter((entry) => ["expense", "refund", "adjustment_out"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const totalReceived = cashFinanceEntries.filter((entry) => ["income", "adjustment_in"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const totalOutgoings = cashFinanceEntries.filter((entry) => ["expense", "refund", "adjustment_out"].includes(entry.kind)).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const overallReceivables = [...new Set<string>(approvedQuotes.map((quote) => String(quote.customerName)))].reduce<number>((sum, name) => sum + customerReceivable(name), 0);
   const netCash = totalReceived - totalOutgoings;
   const todayDate = new Date().toISOString().slice(0, 10);
@@ -2366,7 +2379,7 @@ export default function App() {
     setFinanceEntries((prev) => [{
       id: crypto.randomUUID(), customerId: entry.customer?.id || "", customerName: entry.customer?.name || entry.customerName || "",
       quoteCode: entry.quoteCode || "", kind: entry.kind, amount, date: entry.date || new Date().toISOString().slice(0, 10),
-      description: entry.description?.trim() || "Açıklama eklenmedi", paymentMethod: entry.paymentMethod || "Nakit", dueDate: entry.dueDate || "", isClosed: false,
+      description: entry.description?.trim() || "Açıklama eklenmedi", paymentMethod: entry.paymentMethod || "Nakit", dueDate: entry.dueDate || "", isClosed: false, updatedAt: new Date().toISOString(),
     }, ...prev]);
     return true;
   };
@@ -2387,7 +2400,7 @@ export default function App() {
     setLedgerAmount(""); setLedgerDescription(""); setLedgerDueDate(""); setLedgerPaymentMethod("Nakit");
   };
   const closeFinanceEntry = (entry) => {
-    setFinanceEntries((prev) => prev.map((item) => item.id === entry.id ? { ...item, isClosed: true } : item));
+    setFinanceEntries((prev) => prev.map((item) => item.id === entry.id ? { ...item, isClosed: true, updatedAt: new Date().toISOString() } : item));
     showToast("Vadeli hareket tahsil edildi / kapatıldı olarak işaretlendi.");
   };
 
@@ -4186,7 +4199,7 @@ export default function App() {
                   </div>
                 )}
                 {overdueEntries.length > 0 && <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"><div className="font-extrabold">Gecikmiş Ödeme</div><div className="mt-1 text-xs text-rose-200">{overdueEntries.length} açık vadeli kayıt • Toplam ₺{overdueEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0).toLocaleString("tr-TR")} • Tahsil/kapat işlemi bekliyor</div></div>}
-                {upcomingDueEntries.length > 0 && <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 px-4 py-3"><div className="text-xs font-bold text-sky-200">Yaklaşan Tarihler &amp; Vadeler</div><div className="mt-2 flex flex-wrap gap-2">{upcomingDueEntries.slice(0, 8).map((entry) => <div key={entry.id} className="rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-200"><span className="font-bold">{entry.dueDate}</span> · {entry.customerName || "Genel"} · {entry.paymentMethod || "Nakit"} · ₺{Number(entry.amount).toLocaleString("tr-TR")}</div>)}</div></div>}
+                {upcomingDueEntries.length > 0 && <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 px-4 py-3"><div className="text-xs font-bold text-sky-200">Yaklaşan Tarihler &amp; Vadeler</div><div className="mt-2 flex flex-wrap gap-2">{upcomingDueEntries.slice(0, 8).map((entry) => <div key={entry.id} className="rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-200"><span className="font-bold">{entry.dueDate}</span> · <span className={signedFinanceAmount(entry) >= 0 ? "text-emerald-300" : "text-rose-300"}>{signedFinanceAmount(entry) >= 0 ? "Gelen" : "Giden"}</span> · {entry.customerName || "Genel"} · {entry.paymentMethod || "Nakit"} · ₺{Number(entry.amount).toLocaleString("tr-TR")}</div>)}</div></div>}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                   {[
                     ["Kasa / Net Nakit Durumu", netCash, "income"],
@@ -4214,15 +4227,32 @@ export default function App() {
                   </div>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-white">Muhasebe Hareket Defteri</h3><div className="flex flex-wrap gap-2">
+                  <div className="ledger-heading flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-white">Muhasebe Hareket Defteri</h3><div className="ledger-filters flex flex-wrap gap-2">
                     <select value={ledgerTypeFilter} onChange={(e) => setLedgerTypeFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="all">Tüm hareketler</option><option value="income">Tahsilat</option><option value="expense">Gider / Ödeme</option><option value="refund">İade</option><option value="adjustment_in">Düzeltme (giren)</option><option value="adjustment_out">Düzeltme (çıkan)</option></select>
                     <select value={ledgerCustomerFilter} onChange={(e) => setLedgerCustomerFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white"><option value="all">Tüm müşteriler</option>{[...new Set(allFinanceEntries.map((entry) => entry.customerName).filter(Boolean))].map((name) => <option key={name} value={name}>{name}</option>)}</select>
                     <input type="date" value={ledgerDateFilter} onChange={(e) => setLedgerDateFilter(e.target.value)} className="rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-2 text-xs text-white" />
                   </div></div>
-                  <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-xs"><thead><tr className="border-b border-slate-700 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür</th><th className="p-2">Müşteri</th><th className="p-2">Ödeme Yöntemi</th><th className="p-2">Vade</th><th className="p-2">Teklif</th><th className="p-2">Açıklama</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
+                  <div className="ledger-table-wrap overflow-x-auto"><table className="w-full min-w-[980px] text-xs"><thead><tr className="border-b border-slate-700 text-left text-slate-400"><th className="p-2">Tarih</th><th className="p-2">Tür</th><th className="p-2">Müşteri</th><th className="p-2">Ödeme Yöntemi</th><th className="p-2">Vade</th><th className="p-2">Teklif</th><th className="p-2">Açıklama</th><th className="p-2 text-right">Tutar</th><th className="p-2" /></tr></thead><tbody>
                     {filteredLedger.map((entry) => <tr key={entry.id} className="border-b border-slate-800"><td className="p-2 text-slate-300">{entry.date || "—"}</td><td className="p-2 text-slate-200">{{ income: "Tahsilat", expense: "Gider / Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind}</td><td className="p-2 text-slate-300">{entry.customerName || "Genel"}</td><td className="p-2 text-slate-400">{entry.paymentMethod || "Nakit"}</td><td className={`p-2 ${entry.dueDate && entry.dueDate < todayDate && !entry.isClosed ? "font-bold text-rose-300" : "text-slate-400"}`}>{entry.dueDate || "—"}{entry.isClosed && <span className="ml-1 text-emerald-300">• Kapalı</span>}</td><td className="p-2 text-slate-400">{entry.quoteCode || "—"}</td><td className="p-2 text-slate-400">{entry.description}</td><td className={`p-2 text-right font-bold ${signedFinanceAmount(entry) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{signedFinanceAmount(entry) >= 0 ? "+" : "−"}₺{Number(entry.amount).toLocaleString("tr-TR")}</td><td className="p-2 text-right whitespace-nowrap">{entry.dueDate && !entry.isClosed && <button type="button" title="Tahsil edildi / kapatıldı olarak işaretle" onClick={() => closeFinanceEntry(entry)} className="mr-1 rounded-lg px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/10">Kapat</button>}<button type="button" title="Hareketi sil" onClick={() => deleteFinanceEntry(entry)} className="rounded-lg p-1.5 text-rose-300 hover:bg-rose-500/10"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
-                    {!filteredLedger.length && <tr><td colSpan={7} className="p-6 text-center text-slate-500">Filtrelere uygun mali hareket bulunamadı.</td></tr>}
+                    {!filteredLedger.length && <tr><td colSpan={9} className="p-6 text-center text-slate-500">Filtrelere uygun mali hareket bulunamadı.</td></tr>}
                   </tbody></table></div>
+                  <div className="ledger-mobile-list">
+                    {filteredLedger.map((entry) => {
+                      const isIncoming = ["income", "adjustment_in"].includes(entry.kind);
+                      const kindLabel = { income: "Tahsilat", expense: "Gider / Ödeme", refund: "İade", adjustment_in: "Düzeltme (giren)", adjustment_out: "Düzeltme (çıkan)" }[entry.kind] || entry.kind;
+                      return <article key={entry.id} className="ledger-mobile-card">
+                        <div className="ledger-mobile-card-top">
+                          <div><strong>{entry.date || "Tarihsiz"}</strong><span>{kindLabel}</span></div>
+                          <b className={isIncoming ? "is-incoming" : "is-outgoing"}>{isIncoming ? "+" : "−"}₺{Number(entry.amount || 0).toLocaleString("tr-TR")}</b>
+                        </div>
+                        <div className="ledger-mobile-card-meta"><span>{entry.customerName || "Genel"}</span><span>{entry.paymentMethod || "Nakit"}</span>{entry.quoteCode && <span>{entry.quoteCode}</span>}</div>
+                        {entry.description && <p>{entry.description}</p>}
+                        {entry.dueDate && <div className={entry.isClosed ? "ledger-mobile-due is-closed" : entry.dueDate < todayDate ? "ledger-mobile-due is-overdue" : "ledger-mobile-due"}>{entry.isClosed ? `Kapalı • ${entry.dueDate}` : `Vade: ${entry.dueDate}`}</div>}
+                        <div className="ledger-mobile-card-actions">{entry.dueDate && !entry.isClosed && <button type="button" onClick={() => closeFinanceEntry(entry)}>Kapat</button>}<button type="button" onClick={() => deleteFinanceEntry(entry)} className="is-delete">Sil</button></div>
+                      </article>;
+                    })}
+                    {!filteredLedger.length && <div className="ledger-mobile-empty">Filtrelere uygun mali hareket bulunamadı.</div>}
+                  </div>
                 </div>
               </div>
             )}

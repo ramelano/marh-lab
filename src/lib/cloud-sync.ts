@@ -319,6 +319,8 @@ export async function syncTenantSnapshot(tenantId: string, settings: any, custom
       kind: entry.kind,
       amount: Number(entry.amount || 0),
       transaction_date: entry.date,
+      due_date: entry.dueDate || null,
+      is_closed: Boolean(entry.isClosed),
       description: entry.description || "",
       updated_at: new Date().toISOString(),
     })), "id");
