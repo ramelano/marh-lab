@@ -167,6 +167,20 @@ export async function fetchAdminTenants() {
   return data || [];
 }
 
+export async function fetchAdminAuditLogs(limit = 500) {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function writeAdminAuditLog(entry: Record<string, unknown>) {
+  if (!supabase) return false;
+  const { error } = await supabase.from("audit_logs").insert({ ...entry, created_at: new Date().toISOString(), before_data: entry.before_data || null, after_data: entry.after_data || null });
+  if (error) return false;
+  return true;
+}
+
 export async function persistTenants(firms: any[]) {
   if (!supabase || !firms.length) return;
   await queueUpsert("tenants", firms.map(tenantToCloud), "username");

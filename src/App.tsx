@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import AdminPanel, { type AdminAudit } from "./AdminPanel";
+import "./admin.css";
 import {
   customerFromCloud,
   fetchAdminTenants,
@@ -14,6 +16,8 @@ import {
   syncTenantSnapshot,
   tenantFromCloud,
   uploadFirmLogo,
+  fetchAdminAuditLogs,
+  writeAdminAuditLog,
 } from "./lib/cloud-sync";
 import {
   Plus,
@@ -1584,6 +1588,19 @@ function normalizeAdminFirm(value: any) {
   return { ...source, id: String(source.id || `firm-${Date.now()}`), username: typeof source.username === "string" ? source.username : "", companyName: typeof source.companyName === "string" ? source.companyName : "Adsız firma" };
 }
 
+const ADMIN_AUDIT_KEY = "marhlab.admin.audit.v1";
+function readLocalAudit(): AdminAudit[] {
+  try { const value = JSON.parse(localStorage.getItem(ADMIN_AUDIT_KEY) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; }
+}
+function auditDeviceType() {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (/mobile|android|iphone|ipad/i.test(ua)) return "Mobil tarayıcı";
+  if (/windows/i.test(ua)) return "Windows tarayıcı";
+  if (/macintosh|mac os/i.test(ua)) return "macOS tarayıcı";
+  if (/linux/i.test(ua)) return "Linux tarayıcı";
+  return ua ? "Masaüstü tarayıcı" : null;
+}
+
 function normalizeFinanceEntry(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) reportAppDataIssue("Finans hareketi", new Error("Kayıt nesne biçiminde değil; güvenli finans alanları kullanıldı."));
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -1737,6 +1754,23 @@ export default function App() {
   const [newFirm, setNewFirm] = useState({ companyName: "", ownerName: "", username: "", password: "", phone: "", city: "", plan: "7 Günlük Demo" });
   const [adminFirms, setAdminFirms] = useState(() => readStoredArray("marhlab.admin.firms.v1", [{ id: "f-1", username: "kondes_metal", password: "Kd!2026#92", companyName: "KON-DES METAL", ownerName: "Mustafa Duysak", phone: "0530 695 92 68", city: "Konya", plan: "Enterprise (12 Ay)", expiresAt: "01 Haz 2027" }], normalizeAdminFirm));
   useEffect(() => { writeStoredValue("marhlab.admin.firms.v1", adminFirms); }, [adminFirms]);
+  const [adminAudits, setAdminAudits] = useState<AdminAudit[]>(() => readLocalAudit());
+  const [adminAuditLoading, setAdminAuditLoading] = useState(false);
+  const [adminAuditConfigured, setAdminAuditConfigured] = useState(false);
+  const recordAdminAudit = async (entry: Omit<AdminAudit, "id" | "created_at">) => {
+    const enriched = { ...entry, ip_address: null, user_agent: typeof navigator === "undefined" ? null : navigator.userAgent, device_type: auditDeviceType(), source: "client-local; IP backend/edge yok" };
+    const localEntry = { ...enriched, id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`, created_at: new Date().toISOString() };
+    setAdminAudits((current) => { const next = [localEntry, ...current].slice(0, 500); writeStoredValue(ADMIN_AUDIT_KEY, next); return next; });
+    const stored = await writeAdminAuditLog(enriched);
+    if (stored) setAdminAuditConfigured(true);
+  };
+  const refreshAdminAudits = async () => {
+    setAdminAuditLoading(true);
+    try { const remote = await fetchAdminAuditLogs(); if (remote.length) { setAdminAudits(remote); setAdminAuditConfigured(true); writeStoredValue(ADMIN_AUDIT_KEY, remote); } }
+    catch { setAdminAuditConfigured(false); }
+    finally { setAdminAuditLoading(false); }
+  };
+  useEffect(() => { if (viewMode === "admin") void refreshAdminAudits(); }, [viewMode]);
   useEffect(() => { setAdminFirms(prev => prev.map(f => f.username === firmSettings.username ? { ...f, companyName: firmSettings.companyName, ownerName: firmSettings.ownerName, phone: firmSettings.phone, city: siteCity } : f)); }, [firmSettings.companyName, firmSettings.ownerName, firmSettings.phone, firmSettings.username]);
   const [activeTenantUsername, setActiveTenantUsername] = useState(DEFAULT_FIRM_SETTINGS.username);
   const [siteCity, setSiteCity] = useState("Konya Merkez");
@@ -2099,6 +2133,7 @@ export default function App() {
       setLoginError("");
       setAdminCloudReady(false);
       setShowLoginModal(false);
+      void recordAdminAudit({ actor: u, action: "login", module: "authentication", details: "Yönetici oturumu açıldı." });
       setViewMode("admin");
       return;
     }
@@ -2130,6 +2165,7 @@ export default function App() {
       setDeletedFinanceIds(readStoredArray(prefix + "deleted-finance", [], (value) => String(value)));
       setFinanceCloudEnabled(false);
       setLoginError(""); setShowLoginModal(false); setMemberTab("home"); setViewMode("member");
+      void recordAdminAudit({ actor: normalized, action: "login", module: "authentication", tenant_id: firm.id || null, record_id: firm.id, details: `${firm.companyName} firma oturumu açıldı.` });
       const onboarding = normalizeSettings({ ...DEFAULT_FIRM_SETTINGS, username: normalized, companyName: firm.companyName, ownerName: firm.ownerName || "", phone: firm.phone || "", address: firm.address || "", password: p, ...storedSettings });
       setOnboardingForm({ companyName: onboarding.companyName || "", logoUrl: onboarding.logoUrl || "", ownerName: onboarding.ownerName || "", phone: onboarding.phone || "", email: onboarding.email || "", cityDistrict: onboarding.cityDistrict || firm.city || "", address: onboarding.address || "" });
       if (!onboarding.onboardingCompleted) setOnboardingOpen(true);
@@ -4593,134 +4629,18 @@ export default function App() {
       {/* VIEW 3: MARH-LAB YÖNETİM PANELİ                                      */}
       {/* ==================================================================== */}
       {viewMode === "admin" && (
-        <div className="no-print flex-1 flex flex-col justify-between">
-          <div className="max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center text-sm">
-                  ML
-                </div>
-                <div>
-                  <h1 className="text-base font-extrabold text-white">MARH-LAB YÖNETİM MERKEZİ</h1>
-                  <p className="text-xs text-slate-400">SaaS Üye, Ciro &amp; Lisans Kontrolü</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("member")}
-                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold"
-                >
-                  Firma Stüdyosuna Geç
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("landing")}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-4 flex flex-wrap gap-2 items-center"><input value={adminAnnouncement} onChange={(e) => setAdminAnnouncement(e.target.value)} placeholder="Platform duyurusu yazın..." className="flex-1 min-w-[240px] rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white" /><button type="button" onClick={() => showToast(adminAnnouncement ? "Duyuru tüm bayilere yayınlandı." : "Önce duyuru metni yazın.")} className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold">Platform Duyurusu Yayınla</button></div>
-            <div className="flex justify-end"><button type="button" onClick={() => setShowNewFirmForm(!showNewFirmForm)} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-extrabold"><Plus className="w-3.5 h-3.5" /> Yeni Üye Firma / Demo Hesabı Oluştur</button></div>
-            {showNewFirmForm && <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">{[['companyName','Firma Ünvanı'],['ownerName','Yetkili'],['username','Kullanıcı adı'],['password','Şifre'],['phone','Telefon'],['city','Şehir']].map(([key,label]) => <input key={key} value={newFirm[key]} onChange={(e) => setNewFirm({...newFirm,[key]:e.target.value})} placeholder={label} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white" />)}<select value={newFirm.plan} onChange={(e)=>setNewFirm({...newFirm,plan:e.target.value})} className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white"><option>7 Günlük Demo</option><option>1 Ay</option><option>12 Ay</option></select><button type="button" onClick={() => { if (!newFirm.companyName || !newFirm.username || !newFirm.password) return showToast("Firma adı, kullanıcı adı ve şifre zorunludur."); if (adminFirms.some(f => f.username.toLowerCase() === newFirm.username.toLowerCase())) return showToast("Bu kullanıcı adı zaten kayıtlı."); setAdminFirms(prev => [...prev, { id: `f-${Date.now()}`, ...newFirm, expiresAt: newFirm.plan === "7 Günlük Demo" ? "7 gün sonra" : "Lisans süresince" }]); setNewFirm({ companyName:"",ownerName:"",username:"",password:"",phone:"",city:"",plan:"7 Günlük Demo" }); setShowNewFirmForm(false); showToast("Yeni firma hesabı oluşturuldu."); }} className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-extrabold text-slate-950">Oluştur</button></div>}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                <div className="text-[11px] font-bold text-slate-400 uppercase">Aktif Üye Firma</div>
-                <div className="text-2xl font-black text-white mt-1">{adminFirms.length} Firma</div>
-                <div className="text-[11px] text-emerald-400 mt-1">KON-DES METAL Aktif</div>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                <div className="text-[11px] font-bold text-slate-400 uppercase">
-                  Provizyonda Bekleyen
-                </div>
-                <div className="text-2xl font-black text-amber-400 mt-1">
-                  {pendingQuotes.length} adet
-                </div>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                <div className="text-[11px] font-bold text-slate-400 uppercase">Onaylanan Teklif</div>
-                <div className="text-2xl font-black text-emerald-400 mt-1">
-                  {approvedQuotes.length} adet
-                </div>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase">
-                    Platform Teklif Hacmi
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setAdminRevenueVisible(!adminRevenueVisible)}
-                    className="text-slate-400 hover:text-white p-1"
-                  >
-                    {adminRevenueVisible ? (
-                      <EyeOff className="w-4 h-4" />
-                    ) : (
-                      <Eye className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-                <div className="text-2xl font-black text-emerald-400 mt-1">
-                  {adminRevenueVisible ? `₺${quotes.reduce((a,q)=>a+quoteTotal(q),0).toLocaleString("tr-TR")}` : "••••••"}
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-sm font-bold text-white">Kayıtlı SaaS Üye Firmalar</h2>
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={adminSearch}
-                    onChange={(e) => setAdminSearch(e.target.value)}
-                    placeholder="Firma ara..."
-                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-8 pr-3 py-1.5 text-xs text-white"
-                  />
-                </div>
-              </div>
-
-              {adminFirms
-                .filter((f) =>
-                  f.companyName
-                    .toLocaleLowerCase("tr")
-                    .includes(adminSearch.toLocaleLowerCase("tr"))
-                )
-                .map((firm) => (
-                  <div
-                    key={firm.id}
-                    className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white text-sm">{firm.companyName}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-bold">
-                          {firm.plan} • Aktif
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        Yetkili: {firm.ownerName} • Tel: {firm.phone} • Şehir: {firm.city}
-                      </div>
-                    </div>
-                    <div className="flex gap-2"><button type="button" onClick={() => { navigator.clipboard?.writeText(`Kullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`); showToast("Giriş bilgileri kopyalandı."); }} className="px-3 py-2 rounded-xl bg-slate-800 text-xs font-bold text-sky-300">Bilgileri Kopyala</button><a href={`https://wa.me/?text=${encodeURIComponent(`MARH-LAB giriş bilgileriniz\nKullanıcı adı: ${firm.username}\nŞifre: ${firm.password || ""}`)}`} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-emerald-700 text-xs font-bold text-white">WhatsApp</a><button type="button" onClick={() => { setLoginUser(firm.username); setLoginPass(firm.password || ""); setActiveTenantUsername(firm.username); setMemberTab("home"); setViewMode("member"); }} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300">Firma Panelini Aç</button></div>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          <footer className="border-t border-slate-900 bg-slate-950/90 py-3.5 px-4">
-            <div className="max-w-7xl mx-auto flex justify-between text-[11px] text-slate-400">
-              <span>MARH-LAB SaaS Yönetim Konsolu</span>
-              <span>Crafted &amp; Engineered by ramelano • MARH-LAB SaaS Architecture</span>
-            </div>
-          </footer>
-        </div>
+        <AdminPanel
+          firms={adminFirms}
+          setFirms={setAdminFirms}
+          audits={adminAudits}
+          auditConfigured={adminAuditConfigured}
+          auditLoading={adminAuditLoading}
+          onRefreshAudits={() => void refreshAdminAudits()}
+          onAudit={(entry) => void recordAdminAudit(entry)}
+          onOpenMember={(firm) => { setLoginUser(firm.username); setLoginPass(firm.password || ""); setActiveTenantUsername(firm.username); setMemberTab("home"); setViewMode("member"); }}
+          onExit={() => { void recordAdminAudit({ actor: "marhlab-admin", action: "logout", module: "authentication", details: "Yönetici oturumu kapatıldı." }); setViewMode("landing"); }}
+          showToast={showToast}
+        />
       )}
 
       {/* ==================================================================== */}
