@@ -1772,6 +1772,7 @@ export default function App() {
   const [cuttingQuote, setCuttingQuote] = useState(null);
   const [tenantCloudReady, setTenantCloudReady] = useState(false);
   const draftBaselineRef = useRef(null);
+  const skipSnapshotSyncRef = useRef(false);
   const [adminCloudReady, setAdminCloudReady] = useState(false);
 
   useEffect(() => { writeStoredValue(`marhlab.tenant.${firmSettings.username}.trash`, trash); }, [trash, firmSettings.username]);
@@ -1826,6 +1827,7 @@ export default function App() {
         if (cancelled) return;
         const snapshot = await fetchTenantSnapshot(tenant.id);
         if (cancelled || !snapshot) return;
+        skipSnapshotSyncRef.current = true;
         setCloudTenantId(tenant.id);
         const prefix = `marhlab.tenant.${username}.`;
         const cloudCustomers = Array.isArray(snapshot.customers) ? snapshot.customers : [];
@@ -1905,6 +1907,10 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode !== "member" || !tenantCloudReady || !cloudTenantId || !supabase) return;
+    if (skipSnapshotSyncRef.current) {
+      skipSnapshotSyncRef.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => {
       void syncTenantSnapshot(cloudTenantId, firmSettings, customers, quotes, trash, financeEntries, financeCloudEnabled, deletedFinanceIds);
     }, 800);
