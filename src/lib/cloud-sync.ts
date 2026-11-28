@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "marhlab.supabase.pending.v1";
 const STATUS_EVENT = "marhlab:supabase-status";
 
-type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string; operation?: "upsert" | "delete"; filterId?: string; updatedAt?: string };
+type QueueJob = { id: string; table: string; rows: Record<string, unknown>[]; conflict: string; operation?: "upsert" | "delete" | "audit"; filterId?: string; updatedAt?: string };
 export type CustomerRecord = { id: string; name: string; phone?: string; addresses?: string[]; address?: string; city?: string; district?: string; notes?: string };
 export type QuoteRecord = Record<string, any>;
 
@@ -55,6 +55,11 @@ function enqueue(job: QueueJob) {
 
 async function perform(job: QueueJob) {
   if (!supabase) return;
+  if (job.operation === "audit") {
+    const { error } = await supabase.functions.invoke("admin-audit-log", { body: job.rows[0] });
+    if (error) throw error;
+    return;
+  }
   if (job.operation === "delete" && job.filterId) {
     const { error } = await supabase.from(job.table).delete().eq("id", job.filterId);
     if (error) throw error;
@@ -122,6 +127,23 @@ export function subscribeToCloudQueue() {
   return () => { window.removeEventListener("online", retry); };
 }
 
+const TENANT_MUTATION_KEY = "marhlab.tenant.mutation.v1";
+export function publishTenantMutation(username: string, action: string) {
+  if (typeof window === "undefined") return;
+  const message = { username: username.toLowerCase(), action, at: new Date().toISOString() };
+  try { localStorage.setItem(TENANT_MUTATION_KEY, JSON.stringify(message)); } catch { /* localStorage kapalı olabilir */ }
+  try { new BroadcastChannel("marhlab-tenant-mutations").postMessage(message); } catch { /* desteklenmeyen tarayıcı */ }
+}
+
+export function subscribeToTenantMutations(handler: (message: { username?: string; action?: string }) => void) {
+  if (typeof window === "undefined") return () => {};
+  const onStorage = (event: StorageEvent) => { if (event.key !== TENANT_MUTATION_KEY || !event.newValue) return; try { handler(JSON.parse(event.newValue)); } catch { /* bozuk olay yok sayılır */ } };
+  window.addEventListener("storage", onStorage);
+  let channel: BroadcastChannel | null = null;
+  try { channel = new BroadcastChannel("marhlab-tenant-mutations"); channel.onmessage = (event) => handler(event.data || {}); } catch { /* desteklenmeyen tarayıcı */ }
+  return () => { window.removeEventListener("storage", onStorage); channel?.close(); };
+}
+
 export function tenantFromCloud(row: any) {
   return {
     id: row.id,
@@ -175,10 +197,19 @@ export async function fetchAdminAuditLogs(limit = 500) {
 }
 
 export async function writeAdminAuditLog(entry: Record<string, unknown>) {
-  if (!supabase) return false;
-  const { error } = await supabase.from("audit_logs").insert({ ...entry, created_at: new Date().toISOString(), before_data: entry.before_data || null, after_data: entry.after_data || null });
-  if (error) return false;
-  return true;
+  const payload = { ...entry, idempotency_key: entry.idempotency_key || crypto.randomUUID() };
+  if (!supabase || !navigator.onLine) {
+    enqueue({ id: crypto.randomUUID(), table: "audit_logs", rows: [payload], conflict: "idempotency_key", operation: "audit", updatedAt: new Date().toISOString() });
+    publishSyncStatus("queued", "Audit olayı çevrimdışı kuyruğa alındı; bağlantı gelince tekil olarak gönderilecek.");
+    return false;
+  }
+  try {
+    const { error } = await supabase.functions.invoke("admin-audit-log", { body: payload });
+    if (!error) return true;
+  } catch { /* Edge erişilemiyorsa offline kuyruğuna düş */ }
+  enqueue({ id: crypto.randomUUID(), table: "audit_logs", rows: [payload], conflict: "idempotency_key", operation: "audit", updatedAt: new Date().toISOString() });
+  publishSyncStatus("queued", "Audit Edge Function erişilemiyor; olay benzersiz anahtarıyla kuyruğa alındı.");
+  return false;
 }
 
 export async function persistTenants(firms: any[]) {

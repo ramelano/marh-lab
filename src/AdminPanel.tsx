@@ -12,6 +12,7 @@ type Props = {
   auditLoading: boolean;
   onRefreshAudits: () => void;
   onAudit: (entry: Omit<AdminAudit, "id" | "created_at">) => void;
+  onTenantMutation: (username: string, action: string) => void;
   onOpenMember: (firm: AdminFirm) => void;
   onExit: () => void;
   showToast: (message: string) => void;
@@ -23,7 +24,7 @@ const actionLabels: Record<string, string> = { create: "Oluşturma", update: "G�
 function dateLabel(value?: string) { return value ? new Date(value).toLocaleString("tr-TR") : "Tarih alınamadı"; }
 function deviceLabel(value?: string | null) { return value || "Belirlenemedi"; }
 
-export default function AdminPanel({ firms, setFirms, audits, auditConfigured, auditLoading, onRefreshAudits, onAudit, onOpenMember, onExit, showToast }: Props) {
+export default function AdminPanel({ firms, setFirms, audits, auditConfigured, auditLoading, onRefreshAudits, onAudit, onTenantMutation, onOpenMember, onExit, showToast }: Props) {
   const [section, setSection] = useState("overview");
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
@@ -53,10 +54,12 @@ export default function AdminPanel({ firms, setFirms, audits, auditConfigured, a
     if (editingId) {
       const previous = firms.find((firm) => firm.id === editingId);
       setFirms((current) => current.map((firm) => firm.id === editingId ? next : firm));
+      onTenantMutation(next.username, "update");
       onAudit({ actor: "marhlab-admin", action: "update", module: "tenants", record_id: next.id, before_data: previous, after_data: next, details: `${next.companyName} firma kaydı güncellendi.` });
       showToast("Firma kaydı güncellendi.");
     } else {
       setFirms((current) => [...current, next]);
+      onTenantMutation(next.username, "create");
       onAudit({ actor: "marhlab-admin", action: "create", module: "tenants", record_id: next.id, after_data: next, details: `${next.companyName} firma kaydı oluşturuldu.` });
       showToast("Firma kaydı oluşturuldu.");
     }
@@ -65,12 +68,14 @@ export default function AdminPanel({ firms, setFirms, audits, auditConfigured, a
   const toggleFirm = (firm: AdminFirm) => {
     const next = { ...firm, isActive: firm.isActive === false };
     setFirms((current) => current.map((item) => item.id === firm.id ? next : item));
+    onTenantMutation(firm.username, "status");
     onAudit({ actor: "marhlab-admin", action: "update", module: "tenants", record_id: firm.id, before_data: firm, after_data: next, details: `${firm.companyName} hesabı ${next.isActive ? "aktif" : "pasif"} yapıldı.` });
   };
   const removeFirm = () => {
     if (!confirmRemove) return;
     const firm = confirmRemove;
     setFirms((current) => current.filter((item) => item.id !== firm.id));
+    onTenantMutation(firm.username, "remove");
     onAudit({ actor: "marhlab-admin", action: "remove", module: "tenants", record_id: firm.id, before_data: firm, details: `${firm.companyName} tenant listeden çıkarıldı. Bağlı müşteriler, teklifler ve mali kayıtlar Supabase CASCADE/RLS politikasına bağlıdır; bu panel fiziksel bağlı veri silinmesini varsaymaz.` });
     setConfirmRemove(null); showToast("Firma listeden çıkarıldı. Bağlı verilerin durumu log notunda açıkça belirtildi.");
   };

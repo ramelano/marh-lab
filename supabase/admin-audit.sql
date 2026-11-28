@@ -3,6 +3,7 @@
 -- istemci uygulaması sahte IP üretmez.
 create table if not exists public.audit_logs (
   id uuid primary key default gen_random_uuid(),
+  idempotency_key uuid not null default gen_random_uuid(),
   actor text null,
   tenant_id uuid null references public.tenants(id) on delete set null,
   action text not null check (action in ('create','update','delete','remove','login','logout','sync','export')),
@@ -17,6 +18,10 @@ create table if not exists public.audit_logs (
   after_data jsonb null,
   created_at timestamptz not null default now()
 );
+alter table public.audit_logs add column if not exists idempotency_key uuid;
+update public.audit_logs set idempotency_key = gen_random_uuid() where idempotency_key is null;
+alter table public.audit_logs alter column idempotency_key set not null;
+create unique index if not exists audit_logs_idempotency_key_uidx on public.audit_logs (idempotency_key);
 create index if not exists audit_logs_created_at_idx on public.audit_logs (created_at desc);
 create index if not exists audit_logs_actor_idx on public.audit_logs (actor);
 create index if not exists audit_logs_action_idx on public.audit_logs (action);

@@ -18,6 +18,8 @@ import {
   uploadFirmLogo,
   fetchAdminAuditLogs,
   writeAdminAuditLog,
+  publishTenantMutation,
+  subscribeToTenantMutations,
 } from "./lib/cloud-sync";
 import {
   Plus,
@@ -1758,7 +1760,7 @@ export default function App() {
   const [adminAuditLoading, setAdminAuditLoading] = useState(false);
   const [adminAuditConfigured, setAdminAuditConfigured] = useState(false);
   const recordAdminAudit = async (entry: Omit<AdminAudit, "id" | "created_at">) => {
-    const enriched = { ...entry, ip_address: null, user_agent: typeof navigator === "undefined" ? null : navigator.userAgent, device_type: auditDeviceType(), source: "client-local; IP backend/edge yok" };
+    const enriched = { ...entry, idempotency_key: crypto.randomUUID(), ip_address: null, user_agent: typeof navigator === "undefined" ? null : navigator.userAgent, device_type: auditDeviceType(), source: "client-local; IP backend/edge yok" };
     const localEntry = { ...enriched, id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`, created_at: new Date().toISOString() };
     setAdminAudits((current) => { const next = [localEntry, ...current].slice(0, 500); writeStoredValue(ADMIN_AUDIT_KEY, next); return next; });
     const stored = await writeAdminAuditLog(enriched);
@@ -1774,6 +1776,17 @@ export default function App() {
   useEffect(() => { setAdminFirms(prev => prev.map(f => f.username === firmSettings.username ? { ...f, companyName: firmSettings.companyName, ownerName: firmSettings.ownerName, phone: firmSettings.phone, city: siteCity } : f)); }, [firmSettings.companyName, firmSettings.ownerName, firmSettings.phone, firmSettings.username]);
   const [activeTenantUsername, setActiveTenantUsername] = useState(DEFAULT_FIRM_SETTINGS.username);
   const [siteCity, setSiteCity] = useState("Konya Merkez");
+  useEffect(() => {
+    if (viewMode !== "member") return;
+    const stop = subscribeToTenantMutations((message) => {
+      if (message.username && message.username === (activeTenantUsername || firmSettings.username).toLowerCase()) {
+        setCloudRefreshToken((value) => value + 1);
+        publishSyncStatus("syncing", "Bu firma başka bir sekmede güncellendi; bulut kaydı yenileniyor.");
+      }
+    });
+    const poll = window.setInterval(() => setCloudRefreshToken((value) => value + 1), 15000);
+    return () => { stop(); window.clearInterval(poll); };
+  }, [viewMode, activeTenantUsername, firmSettings.username]);
   const [travelCost, setTravelCost] = useState(0);
   const [teamSize, setTeamSize] = useState(2);
   const [workDays, setWorkDays] = useState(1);
@@ -4637,6 +4650,7 @@ export default function App() {
           auditLoading={adminAuditLoading}
           onRefreshAudits={() => void refreshAdminAudits()}
           onAudit={(entry) => void recordAdminAudit(entry)}
+          onTenantMutation={publishTenantMutation}
           onOpenMember={(firm) => { setLoginUser(firm.username); setLoginPass(firm.password || ""); setActiveTenantUsername(firm.username); setMemberTab("home"); setViewMode("member"); }}
           onExit={() => { void recordAdminAudit({ actor: "marhlab-admin", action: "logout", module: "authentication", details: "Yönetici oturumu kapatıldı." }); setViewMode("landing"); }}
           showToast={showToast}
